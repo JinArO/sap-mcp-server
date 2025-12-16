@@ -118,4 +118,6 @@ def create_sales_order(
 # 5. 啟動伺服器
 # ==============================================================================
 if __name__ == "__main__":
-    uvicorn.run(mcp._sse_app, host="0.0.0.0", port=8000)
+    print("Starting FastMCP Server via UVX...")
+    # 修正重點：請將 _sse_app 改為 sse_app (去掉前面的底線)
+    uvicorn.run(mcp.sse_app, host="0.0.0.0", port=8000)
