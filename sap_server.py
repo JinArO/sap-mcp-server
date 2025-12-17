@@ -10,7 +10,6 @@
 
 import os
 import requests
-import tempfile
 from mcp.server.fastmcp import FastMCP
 from zeep import Client, Settings
 from zeep.transports import Transport
@@ -18,104 +17,182 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 
 # ==============================================================================
-# 1. 內嵌 WSDL 定義
+# 1. 設定區 (Configuration) - 這是控制台！
 # ==============================================================================
-WSDL_CONTENT = r"""<?xml version="1.0" encoding="utf-8"?><wsdl:definitions targetNamespace="urn:sap-com:document:sap:rfc:functions" xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:wsoap12="http://schemas.xmlsoap.org/wsdl/soap12/" xmlns:http="http://schemas.xmlsoap.org/wsdl/http/" xmlns:mime="http://schemas.xmlsoap.org/wsdl/mime/" xmlns:tns="urn:sap-com:document:sap:rfc:functions" xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy" xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"><wsdl:documentation><sidl:sidl xmlns:sidl="http://www.sap.com/2007/03/sidl"/></wsdl:documentation><wsp:UsingPolicy wsdl:required="true"/><wsp:Policy wsu:Id="BN__ZWS_BAPI_SALESORDER_CREATE_BINDING"><wsp:ExactlyOne><wsp:All><sapattahnd:Enabled xmlns:sapattahnd="http://www.sap.com/710/features/attachment/">false</sapattahnd:Enabled><saptrnbnd:OptimizedMimeSerialization xmlns:saptrnbnd="http://schemas.xmlsoap.org/ws/2004/09/policy/optimizedmimeserialization" wsp:Optional="true"/><wsaw:UsingAddressing xmlns:wsaw="http://www.w3.org/2006/05/addressing/wsdl" wsp:Optional="true"/><wsp:All xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy"><sp:TransportBinding xmlns:sp="http://docs.oasis-open.org/ws-sx/ws-securitypolicy/200702" xmlns:sapsp="http://www.sap.com/webas/630/soap/features/security/policy" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:wst="http://docs.oasis-open.org/ws-sx/ws-trust/200512" xmlns:wsu="http://schemas.xmlsoap.org/ws/2002/07/utility" xmlns:wsx="http://schemas.xmlsoap.org/ws/2004/09/mex"><wsp:Policy><sp:TransportToken><wsp:Policy><sp:HttpsToken><wsp:Policy><sp:HttpBasicAuthentication/></wsp:Policy></sp:HttpsToken></wsp:Policy></sp:TransportToken><sp:AlgorithmSuite><wsp:Policy><sp:Basic128Rsa15/></wsp:Policy></sp:AlgorithmSuite><sp:Layout><wsp:Policy><sp:Strict/></wsp:Policy></sp:Layout></wsp:Policy></sp:TransportBinding></wsp:All></wsp:All><wsp:All><sapattahnd:Enabled xmlns:sapattahnd="http://www.sap.com/710/features/attachment/">false</sapattahnd:Enabled><saptrnbnd:OptimizedXMLTransfer uri="http://xml.sap.com/2006/11/esi/esp/binxml" xmlns:saptrnbnd="http://www.sap.com/webas/710/soap/features/transportbinding/" wsp:Optional="true"/><wsaw:UsingAddressing xmlns:wsaw="http://www.w3.org/2006/05/addressing/wsdl" wsp:Optional="true"/><wsp:All xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy"><sp:TransportBinding xmlns:sp="http://docs.oasis-open.org/ws-sx/ws-securitypolicy/200702" xmlns:sapsp="http://www.sap.com/webas/630/soap/features/security/policy" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:wst="http://docs.oasis-open.org/ws-sx/ws-trust/200512" xmlns:wsu="http://schemas.xmlsoap.org/ws/2002/07/utility" xmlns:wsx="http://schemas.xmlsoap.org/ws/2004/09/mex"><wsp:Policy><sp:TransportToken><wsp:Policy><sp:HttpsToken><wsp:Policy><sp:HttpBasicAuthentication/></wsp:Policy></sp:HttpsToken></wsp:Policy></sp:TransportToken><sp:AlgorithmSuite><wsp:Policy><sp:Basic128Rsa15/></wsp:Policy></sp:AlgorithmSuite><sp:Layout><wsp:Policy><sp:Strict/></wsp:Policy></sp:Layout></wsp:Policy></sp:TransportBinding></wsp:All></wsp:All></wsp:ExactlyOne></wsp:Policy><wsp:Policy wsu:Id="BN__ZWS_BAPI_SALESORDER_CREATE_BINDING_soap12"><wsp:ExactlyOne><wsp:All><sapattahnd:Enabled xmlns:sapattahnd="http://www.sap.com/710/features/attachment/">false</sapattahnd:Enabled><saptrnbnd:OptimizedMimeSerialization xmlns:saptrnbnd="http://schemas.xmlsoap.org/ws/2004/09/policy/optimizedmimeserialization" wsp:Optional="true"/><wsaw:UsingAddressing xmlns:wsaw="http://www.w3.org/2006/05/addressing/wsdl" wsp:Optional="true"/><wsp:All xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy"><sp:TransportBinding xmlns:sp="http://docs.oasis-open.org/ws-sx/ws-securitypolicy/200702" xmlns:sapsp="http://www.sap.com/webas/630/soap/features/security/policy" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:wst="http://docs.oasis-open.org/ws-sx/ws-trust/200512" xmlns:wsu="http://schemas.xmlsoap.org/ws/2002/07/utility" xmlns:wsx="http://schemas.xmlsoap.org/ws/2004/09/mex"><wsp:Policy><sp:TransportToken><wsp:Policy><sp:HttpsToken><wsp:Policy><sp:HttpBasicAuthentication/></wsp:Policy></sp:HttpsToken></wsp:Policy></sp:TransportToken><sp:AlgorithmSuite><wsp:Policy><sp:Basic128Rsa15/></wsp:Policy></sp:AlgorithmSuite><sp:Layout><wsp:Policy><sp:Strict/></wsp:Policy></sp:Layout></wsp:Policy></sp:TransportBinding></wsp:All></wsp:All><wsp:All><sapattahnd:Enabled xmlns:sapattahnd="http://www.sap.com/710/features/attachment/">false</sapattahnd:Enabled><saptrnbnd:OptimizedXMLTransfer uri="http://xml.sap.com/2006/11/esi/esp/binxml" xmlns:saptrnbnd="http://www.sap.com/webas/710/soap/features/transportbinding/" wsp:Optional="true"/><wsaw:UsingAddressing xmlns:wsaw="http://www.w3.org/2006/05/addressing/wsdl" wsp:Optional="true"/><wsp:All xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy"><sp:TransportBinding xmlns:sp="http://docs.oasis-open.org/ws-sx/ws-securitypolicy/200702" xmlns:sapsp="http://www.sap.com/webas/630/soap/features/security/policy" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:wst="http://docs.oasis-open.org/ws-sx/ws-trust/200512" xmlns:wsu="http://schemas.xmlsoap.org/ws/2002/07/utility" xmlns:wsx="http://schemas.xmlsoap.org/ws/2004/09/mex"><wsp:Policy><sp:TransportToken><wsp:Policy><sp:HttpsToken><wsp:Policy><sp:HttpBasicAuthentication/></wsp:Policy></sp:HttpsToken></wsp:Policy></sp:TransportToken><sp:AlgorithmSuite><wsp:Policy><sp:Basic128Rsa15/></wsp:Policy></sp:AlgorithmSuite><sp:Layout><wsp:Policy><sp:Strict/></wsp:Policy></sp:Layout></wsp:Policy></sp:TransportBinding></wsp:All></wsp:All></wsp:ExactlyOne></wsp:Policy><wsp:Policy wsu:Id="IF__ZWS_BAPI_SALESORDER_CREATE"><wsp:ExactlyOne><wsp:All><sapsession:Session xmlns:sapsession="http://www.sap.com/webas/630/soap/features/session/"><sapsession:enableSession>false</sapsession:enableSession></sapsession:Session><sapcentraladmin:CentralAdministration xmlns:sapcentraladmin="http://www.sap.com/webas/700/soap/features/CentralAdministration/" wsp:Optional="true"><sapcentraladmin:BusinessApplicationID>8BEEAC4D35E71FE08AC70E02EE41BB21</sapcentraladmin:BusinessApplicationID></sapcentraladmin:CentralAdministration></wsp:All></wsp:ExactlyOne></wsp:Policy><wsp:Policy wsu:Id="OP__ZBAPI_SALESORDER_CREATE"><wsp:ExactlyOne><wsp:All><saptrhnw05:required xmlns:saptrhnw05="http://www.sap.com/NW05/soap/features/transaction/">no</saptrhnw05:required><sapcomhnd:enableCommit xmlns:sapcomhnd="http://www.sap.com/NW05/soap/features/commit/">false</sapcomhnd:enableCommit><sapblock:enableBlocking xmlns:sapblock="http://www.sap.com/NW05/soap/features/blocking/">true</sapblock:enableBlocking><saprmnw05:enableWSRM xmlns:saprmnw05="http://www.sap.com/NW05/soap/features/wsrm/">false</saprmnw05:enableWSRM></wsp:All></wsp:ExactlyOne></wsp:Policy><wsdl:types><xsd:schema attributeFormDefault="qualified" targetNamespace="urn:sap-com:document:sap:rfc:functions"><xsd:simpleType name="char1"><xsd:restriction base="xsd:string"><xsd:maxLength value="1"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="char10"><xsd:restriction base="xsd:string"><xsd:maxLength value="10"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="char2"><xsd:restriction base="xsd:string"><xsd:maxLength value="2"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="char20"><xsd:restriction base="xsd:string"><xsd:maxLength value="20"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="char30"><xsd:restriction base="xsd:string"><xsd:maxLength value="30"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="char32"><xsd:restriction base="xsd:string"><xsd:maxLength value="32"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="char35"><xsd:restriction base="xsd:string"><xsd:maxLength value="35"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="char4"><xsd:restriction base="xsd:string"><xsd:maxLength value="4"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="char40"><xsd:restriction base="xsd:string"><xsd:maxLength value="40"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="cuky5"><xsd:restriction base="xsd:string"><xsd:maxLength value="5"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="curr11.2"><xsd:restriction base="xsd:decimal"><xsd:totalDigits value="11"/><xsd:fractionDigits value="2"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="date10"><xsd:restriction base="xsd:string"><xsd:maxLength value="10"/><xsd:pattern value="\d\d\d\d-\d\d-\d\d"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="decimal5.0"><xsd:restriction base="xsd:decimal"><xsd:totalDigits value="5"/><xsd:fractionDigits value="0"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="numeric3"><xsd:restriction base="xsd:string"><xsd:maxLength value="3"/><xsd:pattern value="\d*"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="numeric6"><xsd:restriction base="xsd:string"><xsd:maxLength value="6"/><xsd:pattern value="\d*"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="quantum15.3"><xsd:restriction base="xsd:decimal"><xsd:totalDigits value="15"/><xsd:fractionDigits value="3"/></xsd:restriction></xsd:simpleType><xsd:simpleType name="string"><xsd:restriction base="xsd:string"/></xsd:simpleType><xsd:simpleType name="unit3"><xsd:restriction base="xsd:string"><xsd:maxLength value="3"/></xsd:restriction></xsd:simpleType><xsd:complexType name="ZAIAGENTS_BAPISOITEM_S"><xsd:sequence><xsd:element name="MATERIAL_NO" type="tns:numeric6"/><xsd:element name="MATERIAL" type="tns:char40"/><xsd:element name="UNIT" type="tns:unit3"/><xsd:element name="QTY" type="tns:quantum15.3"/><xsd:element name="CUST_MATERIAL" type="tns:char35"/><xsd:element name="PLANT" type="tns:char4"/><xsd:element name="SHIPPING_POINT" type="tns:char4"/><xsd:element name="DELIVERY_DATE" type="tns:date10"/></xsd:sequence></xsd:complexType><xsd:complexType name="ZBAPIRET"><xsd:sequence><xsd:element name="TYPE" type="tns:char1"/><xsd:element name="ID" type="tns:char20"/><xsd:element name="NUMBER" type="tns:numeric3"/><xsd:element name="MESSAGE" type="tns:string"/><xsd:element name="MESSAGE_LONG" type="tns:string"/><xsd:element name="LOG_NO" type="tns:char20"/><xsd:element name="LOG_MSG_NO" type="tns:numeric6"/><xsd:element name="PARAMETER" type="tns:char32"/><xsd:element name="ROW" type="xsd:int"/><xsd:element name="FIELD" type="tns:char30"/><xsd:element name="SYSTEM" type="tns:char10"/></xsd:sequence></xsd:complexType><xsd:complexType name="ZAIAGENTS_PR_INFO"><xsd:sequence><xsd:element name="PR_NUMBER" type="tns:char10"/><xsd:element name="PR_ITEM" type="tns:numeric6"/><xsd:element name="VENDOR" type="tns:char10"/><xsd:element name="PUR_ORG" type="tns:char4"/><xsd:element name="PLANT" type="tns:char4"/><xsd:element name="PRICE" type="tns:curr11.2"/><xsd:element name="PRICE_UNIT" type="tns:decimal5.0"/><xsd:element name="CURRENCY" type="tns:cuky5"/></xsd:sequence></xsd:complexType><xsd:complexType name="ZAIAGENTS_BAPISOITEM"><xsd:sequence><xsd:element name="item" type="tns:ZAIAGENTS_BAPISOITEM_S" minOccurs="0" maxOccurs="unbounded"/></xsd:sequence></xsd:complexType><xsd:complexType name="ZBAPIRET_T"><xsd:sequence><xsd:element name="item" type="tns:ZBAPIRET" minOccurs="0" maxOccurs="unbounded"/></xsd:sequence></xsd:complexType><xsd:complexType name="ZAIAGENTS_PR_INFO_T"><xsd:sequence><xsd:element name="item" type="tns:ZAIAGENTS_PR_INFO" minOccurs="0" maxOccurs="unbounded"/></xsd:sequence></xsd:complexType><xsd:element name="ZBAPI_SALESORDER_CREATE"><xsd:complexType><xsd:sequence><xsd:element name="CUST_PO" type="tns:char35"/><xsd:element name="CUST_PO_DATE" type="tns:date10"/><xsd:element name="IT_SO_ITEM" type="tns:ZAIAGENTS_BAPISOITEM"/><xsd:element name="ORDER_TYPE" type="tns:char4"/><xsd:element name="SALES_CHANNEL" type="tns:char2"/><xsd:element name="SALES_DIVISION" type="tns:char2"/><xsd:element name="SALES_ORG" type="tns:char4"/><xsd:element name="SHIP_TO_PARTY" type="tns:char10"/><xsd:element name="SOLD_TO_PARTY" type="tns:char10"/></xsd:sequence></xsd:complexType></xsd:element><xsd:element name="ZBAPI_SALESORDER_CREATEResponse"><xsd:complexType><xsd:sequence><xsd:element name="DETAIL_MESSAGE" type="tns:ZBAPIRET_T"/><xsd:element name="PR_ITEM" type="tns:ZAIAGENTS_PR_INFO_T"/><xsd:element name="SALES_NO" type="tns:char10"/></xsd:sequence></xsd:complexType></xsd:element></xsd:schema></wsdl:types><wsdl:message name="ZBAPI_SALESORDER_CREATE"><wsdl:part name="parameters" element="tns:ZBAPI_SALESORDER_CREATE"/></wsdl:message><wsdl:message name="ZBAPI_SALESORDER_CREATEResponse"><wsdl:part name="parameter" element="tns:ZBAPI_SALESORDER_CREATEResponse"/></wsdl:message><wsdl:portType name="ZWS_BAPI_SALESORDER_CREATE"><wsp:Policy><wsp:PolicyReference URI="#IF__ZWS_BAPI_SALESORDER_CREATE"/></wsp:Policy><wsdl:operation name="ZBAPI_SALESORDER_CREATE"><wsp:Policy><wsp:PolicyReference URI="#OP__ZBAPI_SALESORDER_CREATE"/></wsp:Policy><wsdl:input message="tns:ZBAPI_SALESORDER_CREATE"/><wsdl:output message="tns:ZBAPI_SALESORDER_CREATEResponse"/></wsdl:operation></wsdl:portType><wsdl:binding name="ZWS_BAPI_SALESORDER_CREATE_BINDING" type="tns:ZWS_BAPI_SALESORDER_CREATE"><wsp:Policy><wsp:PolicyReference URI="#BN__ZWS_BAPI_SALESORDER_CREATE_BINDING"/></wsp:Policy><soap:binding transport="http://schemas.xmlsoap.org/soap/http" style="document"/><wsdl:operation name="ZBAPI_SALESORDER_CREATE"><soap:operation soapAction="urn:sap-com:document:sap:rfc:functions:ZWS_BAPI_SALESORDER_CREATE:ZBAPI_SALESORDER_CREATERequest" style="document"/><wsdl:input><soap:body use="literal"/></wsdl:input><wsdl:output><soap:body use="literal"/></wsdl:output></wsdl:operation></wsdl:binding><wsdl:binding name="ZWS_BAPI_SALESORDER_CREATE_BINDING_soap12" type="tns:ZWS_BAPI_SALESORDER_CREATE"><wsp:Policy><wsp:PolicyReference URI="#BN__ZWS_BAPI_SALESORDER_CREATE_BINDING_soap12"/></wsp:Policy><wsoap12:binding transport="http://schemas.xmlsoap.org/soap/http" style="document"/><wsdl:operation name="ZBAPI_SALESORDER_CREATE"><wsoap12:operation soapAction="urn:sap-com:document:sap:rfc:functions:ZWS_BAPI_SALESORDER_CREATE:ZBAPI_SALESORDER_CREATERequest" style="document"/><wsdl:input><wsoap12:body use="literal"/></wsdl:input><wsdl:output><wsoap12:body use="literal"/></wsdl:output></wsdl:operation></wsdl:binding><wsdl:service name="ZWS_BAPI_SALESORDER_CREATE_SEV"><wsdl:port name="ZWS_BAPI_SALESORDER_CREATE_BINDING" binding="tns:ZWS_BAPI_SALESORDER_CREATE_BINDING"><soap:address location="https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_bapi_salesorder_create/100/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding"/></wsdl:port><wsdl:port name="ZWS_BAPI_SALESORDER_CREATE_BINDING_soap12" binding="tns:ZWS_BAPI_SALESORDER_CREATE_BINDING_soap12"><wsoap12:address location="https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_bapi_salesorder_create/100/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding"/></wsdl:port></wsdl:service></wsdl:definitions>"""
+# 您的 SAP 主機位置
+SAP_HOST = "vhivcqasci.sap.inventec.com:44300"
+CLIENT = "100" # SAP Client ID
 
-# 自動生成臨時 WSDL 檔案
-temp_wsdl = tempfile.NamedTemporaryFile(delete=False, suffix=".xml", mode="w", encoding="utf-8")
-temp_wsdl.write(WSDL_CONTENT)
-temp_wsdl.close()
-WSDL_PATH = temp_wsdl.name
+# Helper: 自動組裝 SAP WSDL URL
+# 規則: https://<HOST>/sap/bc/srt/rfc/sap/<FUNC>/<CLIENT>/<FUNC>/<BINDING>?wsdl
+def make_sap_url(func_name: str) -> str:
+    func = func_name.lower()
+    return f"https://{SAP_HOST}/sap/bc/srt/rfc/sap/{func}/{CLIENT}/{func}/{func}?wsdl"
 
-# ==============================================================================
-# 2. 初始化 MCP Server
-# ==============================================================================
-mcp = FastMCP("SAP Sales Order BAPI")
-
-SAP_USER = os.environ.get("SAP_USER")
-SAP_PASSWORD = os.environ.get("SAP_PASSWORD")
-
-# ==============================================================================
-# 3. 定義資料模型 (Pydantic)
-# ==============================================================================
-class SalesOrderItem(BaseModel):
-    MATERIAL: str = Field(..., description="Material Number (e.g. 'MZ-FG-M100')")
-    QTY: float = Field(..., description="Quantity")
-    UNIT: str = Field(..., description="Unit (e.g. 'PC')")
-    PLANT: str = Field(..., description="Plant Code (e.g. '1000')")
-    DELIVERY_DATE: str = Field(..., description="YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$")
-    MATERIAL_NO: Optional[str] = Field(None, description="Numeric Material ID")
-    CUST_MATERIAL: Optional[str] = Field(None, description="Customer Material Number")
-    SHIPPING_POINT: Optional[str] = Field(None, description="Shipping Point")
+# --- [API 網址定義] (如果猜錯名稱，請改這裡！) ---
+URL_SO = make_sap_url("ZWS_BAPI_SALESORDER_CREATE")   # 1. Create SO (已知)
+URL_PO = make_sap_url("ZSD_PR_TO_PO")                 # 2. Create PO (已知)
+URL_DN = make_sap_url("ZSD_CREATE_DN")                # 3. Create DN (推測: 交貨單通常在 SD 模組)
+URL_MAT = make_sap_url("ZMM_MATERIAL_GET_DETAIL")     # 4. Material View (推測: 讀取物料詳情)
+URL_SRC = make_sap_url("ZMM_MAINTAIN_SOURCE_LIST")    # 5. Source List (推測: 維護貨源清單)
+URL_INF = make_sap_url("ZMM_MAINTAIN_INFO_RECORD")    # 6. Info Record (推測: 維護資訊記錄)
 
 # ==============================================================================
-# 4. 定義工具邏輯 (Tool)
+# 2. 核心功能 (Setup)
 # ==============================================================================
-@mcp.tool()
-def create_sales_order(
-    ORDER_TYPE: str = Field(..., description="Order Type (e.g. 'OR')"),
-    SALES_ORG: str = Field(..., description="Sales Org (e.g. '1000')"),
-    SOLD_TO_PARTY: str = Field(..., description="Customer No."),
-    IT_SO_ITEM: List[SalesOrderItem] = Field(..., description="Items"),
-    CUST_PO: str = Field("", description="PO Number"),
-    CUST_PO_DATE: Optional[str] = Field(None, description="PO Date YYYY-MM-DD"),
-    SALES_CHANNEL: str = Field("01", description="Dist. Channel"),
-    SALES_DIVISION: str = Field("01", description="Division"),
-    SHIP_TO_PARTY: Optional[str] = Field(None, description="Ship-To Party")
-) -> str:
-    """Create a SAP Sales Order via ZBAPI_SALESORDER_CREATE"""
+mcp = FastMCP("SAP All-in-One Service")
+
+def get_client(wsdl_url: str):
+    """建立 SAP 連線 Client"""
+    SAP_USER = os.environ.get("SAP_USER")
+    SAP_PASSWORD = os.environ.get("SAP_PASSWORD")
 
     if not SAP_USER or not SAP_PASSWORD:
-        return "Error: SAP_USER or SAP_PASSWORD not set."
+        raise ValueError("請確認環境變數 SAP_USER 和 SAP_PASSWORD 已設定")
 
     session = requests.Session()
     session.auth = (SAP_USER, SAP_PASSWORD)
-    session.verify = False
+    session.verify = False # 略過 SSL 驗證 (內部主機常用)
 
+    transport = Transport(session=session)
     settings = Settings(strict=False, xml_huge_tree=True)
 
+    # 直接連網址抓 WSDL
     try:
-        transport = Transport(session=session)
-        client = Client(wsdl=WSDL_PATH, transport=transport, settings=settings)
-
-        # 綁定 Service
-        service = client.create_service(
-            '{urn:sap-com:document:sap:rfc:functions}ZWS_BAPI_SALESORDER_CREATE_BINDING',
-            'https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_bapi_salesorder_create/100/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding'
-        )
-
-        items_payload = [item.model_dump(exclude_none=True) for item in IT_SO_ITEM]
-
-        # 呼叫 SAP
-        response = service.ZBAPI_SALESORDER_CREATE(
-            ORDER_TYPE=ORDER_TYPE,
-            SALES_ORG=SALES_ORG,
-            SALES_CHANNEL=SALES_CHANNEL,
-            SALES_DIVISION=SALES_DIVISION,
-            SOLD_TO_PARTY=SOLD_TO_PARTY,
-            SHIP_TO_PARTY=SHIP_TO_PARTY if SHIP_TO_PARTY else SOLD_TO_PARTY,
-            CUST_PO=CUST_PO,
-            CUST_PO_DATE=CUST_PO_DATE,
-            IT_SO_ITEM={'item': items_payload}
-        )
-
-        sales_no = response.get('SALES_NO')
-        detail_msg = response.get('DETAIL_MESSAGE', {}).get('item', [])
-
-        msg_str = " | ".join([f"{m.get('TYPE')}: {m.get('MESSAGE')}" for m in detail_msg if m.get('TYPE') in ['E', 'A', 'S']])
-
-        if sales_no:
-             return f"Success! Sales Order: {sales_no}\n{msg_str}"
-        return f"Failed.\n{msg_str}"
-
+        return Client(wsdl=wsdl_url, transport=transport, settings=settings)
     except Exception as e:
-        return f"System Error: {str(e)}"
+        raise ConnectionError(f"無法連線到 SAP WSDL: {wsdl_url}. 錯誤: {e}")
 
 # ==============================================================================
-# 5. 啟動伺服器 (Stdio 模式)
+# 3. 工具定義 (Tools)
+# ==============================================================================
+
+# --- [1] Create Sales Order (SO) ---
+class SOItem(BaseModel):
+    MATERIAL: str
+    QTY: float
+    UNIT: str
+    PLANT: str
+    DELIVERY_DATE: str
+
+@mcp.tool()
+def create_sales_order(
+    ORDER_TYPE: str, SALES_ORG: str, SOLD_TO_PARTY: str, IT_SO_ITEM: List[SOItem],
+    SALES_CHANNEL: str = "01", SALES_DIVISION: str = "01"
+) -> str:
+    """[SO] Create Sales Order"""
+    try:
+        client = get_client(URL_SO)
+        items = [item.model_dump() for item in IT_SO_ITEM]
+        res = client.service.ZBAPI_SALESORDER_CREATE(
+            ORDER_TYPE=ORDER_TYPE, SALES_ORG=SALES_ORG,
+            SALES_CHANNEL=SALES_CHANNEL, SALES_DIVISION=SALES_DIVISION,
+            SOLD_TO_PARTY=SOLD_TO_PARTY, IT_SO_ITEM={'item': items}
+        )
+        return f"Result: {res}"
+    except Exception as e:
+        return f"Error (SO): {str(e)}"
+
+# --- [2] Create Purchase Order (PO) ---
+class PRItem(BaseModel):
+    ITEM_NO: str = Field(..., description="PR Item Number e.g. '00010'")
+
+@mcp.tool()
+def create_purchase_order(
+    PR_NUMBER: str, PR_ITEMS: List[PRItem], VENDOR: str,
+    PUR_ORG: str, PUR_PLANT: str, PUR_GROUP: str, DOC_TYPE: str = "NB"
+) -> str:
+    """[PO] Create PO from PR (ZSD_PR_TO_PO)"""
+    try:
+        client = get_client(URL_PO)
+        pr_items = [{'ITEM_NO': x.ITEM_NO} for x in PR_ITEMS]
+
+        # 呼叫 ZSD_PR_TO_PO (請確認 API.csv 裡的 Function 名稱是否完全一致)
+        res = client.service.ZSD_PR_TO_PO(
+            PR_NUMBER=PR_NUMBER, PR_ITEM={'item': pr_items},
+            VENDOR=VENDOR, PUR_ORG=PUR_ORG, PUR_PLANT=PUR_PLANT,
+            PUR_GROUP=PUR_GROUP, DOC_TYPE=DOC_TYPE
+        )
+        return f"Result: {res}"
+    except Exception as e:
+        return f"Error (PO): {str(e)}"
+
+# --- [3] Create Delivery Note (DN) ---
+@mcp.tool()
+def create_outbound_delivery(
+    REF_SO_NO: str = Field(..., description="Sales Order Number"),
+    SHIPPING_POINT: str = Field(..., description="Shipping Point (e.g. 1000)"),
+    DUE_DATE: str = Field(..., description="YYYY-MM-DD")
+) -> str:
+    """[DN] Create Outbound Delivery"""
+    try:
+        client = get_client(URL_DN)
+        # 假設是標準 BAPI 參數，若是客製 ZSD_CREATE_DN 請依實際參數調整
+        res = client.service.ZSD_CREATE_DN(
+            SALES_ORDER=REF_SO_NO,
+            SHIPPING_POINT=SHIPPING_POINT,
+            DUE_DATE=DUE_DATE
+        )
+        return f"Result: {res}"
+    except Exception as e:
+        return f"Error (DN): {str(e)}"
+
+# --- [4] Material View ---
+@mcp.tool()
+def get_material_info(
+    MATERIAL: str, PLANT: Optional[str] = None
+) -> str:
+    """[Material] Get Material Details"""
+    try:
+        client = get_client(URL_MAT)
+        res = client.service.ZMM_MATERIAL_GET_DETAIL(
+            MATERIAL=MATERIAL, PLANT=PLANT
+        )
+        return f"Result: {res}"
+    except Exception as e:
+        return f"Error (Material): {str(e)}"
+
+# --- [5] Maintain Source List ---
+class SourceItem(BaseModel):
+    VENDOR: str
+    VALID_FROM: str
+    VALID_TO: str
+    PPLANT: str
+
+@mcp.tool()
+def maintain_source_list(
+    MATERIAL: str, RECORDS: List[SourceItem]
+) -> str:
+    """[Source List] Maintain Purchase Source List"""
+    try:
+        client = get_client(URL_SRC)
+        items = [x.model_dump() for x in RECORDS]
+        res = client.service.ZMM_MAINTAIN_SOURCE_LIST(
+            MATERIAL=MATERIAL, SOURCE_DATA={'item': items}
+        )
+        return f"Result: {res}"
+    except Exception as e:
+        return f"Error (Source List): {str(e)}"
+
+# --- [6] Maintain Info Record ---
+@mcp.tool()
+def maintain_info_record(
+    VENDOR: str, MATERIAL: str, PURCH_ORG: str,
+    PLANT: str, NET_PRICE: float
+) -> str:
+    """[Info Record] Maintain Info Record"""
+    try:
+        client = get_client(URL_INF)
+        res = client.service.ZMM_MAINTAIN_INFO_RECORD(
+            VENDOR=VENDOR, MATERIAL=MATERIAL,
+            PURCH_ORG=PURCH_ORG, PLANT=PLANT, NET_PRICE=NET_PRICE
+        )
+        return f"Result: {res}"
+    except Exception as e:
+        return f"Error (Info Record): {str(e)}"
+
+# ==============================================================================
+# 4. 啟動 (Stdio Mode)
 # ==============================================================================
 if __name__ == "__main__":
-    # 這裡移除了 uvicorn，直接使用 mcp.run()
-    # 這樣就會預設使用 Stdio 進行溝通
     mcp.run()
