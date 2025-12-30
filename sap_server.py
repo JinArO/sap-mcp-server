@@ -289,5 +289,4 @@ def maintain_info_record(
 # 4. 啟動伺服器 (Web/SSE 模式) - 適用於 EMCP 平台
 # ==============================================================================
 if __name__ == "__main__":
-    print("Starting SAP MCP Server (SSE Mode for EMCP)...", file=sys.stderr)
-    uvicorn.run(mcp.sse_app, host="0.0.0.0", port=8000)
+    mcp.run()
