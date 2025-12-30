@@ -19,70 +19,112 @@ from pydantic import BaseModel, Field
 from pydantic.functional_validators import BeforeValidator
 
 # ==============================================================================
-# 0. 核心工具 - 自動將「單一物件」轉為「列表」
+# 0. 核心工具
 # ==============================================================================
 def ensure_list_validator(v: Any) -> Any:
-    """
-    如果傳進來的是單一物件 (dict)，就自動包成 list。
-    如果已經是 list 或 None，就原樣回傳。
-    這樣可以讓 UI 顯示為 List，但容許使用者只傳單個物件。
-    """
     if v is None:
         return []
     if isinstance(v, list):
         return v
     return [v]
 
-# 定義一個「寬容列表」型別，專門用來修復 UI 傳來的資料
 SmartList = Annotated[List, BeforeValidator(ensure_list_validator)]
 
 # ==============================================================================
-# 1. 設定區 (Configuration)
+# 1. 設定區 (Configuration) - 包含 Binding Name
 # ==============================================================================
 class SAPConfig:
     HOST = "vhivcqasci.sap.inventec.com:44300"
     CLIENT = "100"
     PROTOCOL = "https"
+    NAMESPACE = "urn:sap-com:document:sap:rfc:functions" # SAP 標準 Namespace
 
+    # [設定結構]
+    # path: 網址路徑 (不含 host)
+    # binding: WSDL 內的 Binding 名稱 (通常對應 URL 最後一段的大寫)
     SERVICES = {
-        "SO": "zws_bapi_salesorder_create/{client}/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding",
-        "STO": "zsd_sto_create/{client}/zsd_sto_create_svr/zsd_sto_create_binding",
-        "DN": "zws_bapi_outb_delivery_create/{client}/zws_bapi_outb_delivery_create/bind_dn_create",
-        "MAT": "zws_bapi_material_savedata/{client}/zws_bapi_material_savedata/bind_material",
-        "SRC": "zsd_source_list_maintain/{client}/zsd_source_list_maintain_svr/zsd_source_list_maintain_binding",
-        "INF": "zws_info_record_maintain/{client}/zws_info_record_maintain_svr/zws_info_record_maintain_binding"
+        "SO": {
+            "path": "zws_bapi_salesorder_create/{client}/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding",
+            "binding": "ZWS_BAPI_SALESORDER_CREATE_BINDING"
+        },
+        "STO": {
+            "path": "zsd_sto_create/{client}/zsd_sto_create_svr/zsd_sto_create_binding",
+            "binding": "ZSD_STO_CREATE_BINDING"
+        },
+        "DN": {
+            "path": "zws_bapi_outb_delivery_create/{client}/zws_bapi_outb_delivery_create/bind_dn_create",
+            "binding": "BIND_DN_CREATE"
+        },
+        "MAT": {
+            "path": "zws_bapi_material_savedata/{client}/zws_bapi_material_savedata/bind_material",
+            "binding": "BIND_MATERIAL"
+        },
+        "SRC": {
+            "path": "zsd_source_list_maintain/{client}/zsd_source_list_maintain_svr/zsd_source_list_maintain_binding",
+            "binding": "ZSD_SOURCE_LIST_MAINTAIN_BINDING"
+        },
+        "INF": {
+            "path": "zws_info_record_maintain/{client}/zws_info_record_maintain_svr/zws_info_record_maintain_binding",
+            "binding": "ZWS_INFO_RECORD_MAINTAIN_BINDING"
+        }
     }
 
     @classmethod
-    def get_url(cls, key: str) -> str:
+    def get_info(cls, key: str):
         if key not in cls.SERVICES:
             raise ValueError(f"Unknown SAP Service Key: {key}")
-        path = cls.SERVICES[key].format(client=cls.CLIENT)
-        return f"{cls.PROTOCOL}://{cls.HOST}/sap/bc/srt/rfc/sap/{path}?wsdl"
+
+        cfg = cls.SERVICES[key]
+        path = cfg["path"].format(client=cls.CLIENT)
+
+        # 1. WSDL URL (下載定義用)
+        wsdl_url = f"{cls.PROTOCOL}://{cls.HOST}/sap/bc/srt/rfc/sap/{path}?wsdl"
+
+        # 2. Service Address (實際呼叫用，通常就是不含 ?wsdl 的網址)
+        address = f"{cls.PROTOCOL}://{cls.HOST}/sap/bc/srt/rfc/sap/{path}"
+
+        # 3. Binding QName (告訴 zeep 綁定哪一個 port)
+        # 格式: {Namespace}BindingName
+        binding_name = f"{{{cls.NAMESPACE}}}{cfg['binding']}"
+
+        return wsdl_url, address, binding_name
 
 # ==============================================================================
 # 2. 核心連線功能
 # ==============================================================================
 mcp = FastMCP("SAP All-in-One Service")
 
-def get_client(wsdl_url: str):
+def get_service_proxy(key: str):
+    """
+    建立 SAP 連線並強制綁定到正確的 Service/Port
+    解決 'No default service defined' 錯誤
+    """
     SAP_USER = os.environ.get("SAP_USER")
     SAP_PASSWORD = os.environ.get("SAP_PASSWORD")
 
     if not SAP_USER or not SAP_PASSWORD:
         raise ValueError("Error: SAP_USER or SAP_PASSWORD environment variables are not set.")
 
+    # 1. 取得連線資訊
+    wsdl_url, address, binding_name = SAPConfig.get_info(key)
+
+    # 2. 建立 Session
     session = requests.Session()
     session.auth = (SAP_USER, SAP_PASSWORD)
     session.verify = False
-
     transport = Transport(session=session)
     settings = Settings(strict=False, xml_huge_tree=True)
 
     try:
-        return Client(wsdl=wsdl_url, transport=transport, settings=settings)
+        # 3. 下載 WSDL
+        client = Client(wsdl=wsdl_url, transport=transport, settings=settings)
+
+        # 4. 強制建立 Service Proxy
+        service = client.create_service(binding_name, address)
+
+        return service
     except Exception as e:
-        raise ConnectionError(f"Failed to connect to WSDL: {wsdl_url}. Error: {e}")
+        raise ConnectionError(f"Failed to create service for {key}. WSDL: {wsdl_url}. Error: {e}")
 
 # ==============================================================================
 # 3. 工具定義 (Tools)
@@ -113,9 +155,10 @@ def create_sales_order(
 ) -> str:
     """Create Sales Order (ZBAPI_SALESORDER_CREATE)"""
     try:
-        client = get_client(SAPConfig.get_url("SO"))
+        service = get_service_proxy("SO")
+
         items = [x.model_dump(exclude_none=True) for x in SO_ITEM]
-        res = client.service.ZBAPI_SALESORDER_CREATE(
+        res = service.ZBAPI_SALESORDER_CREATE(
             ORDER_TYPE=ORDER_TYPE, SALES_ORG=SALES_ORG,
             SALES_CHANNEL=SALES_CHANNEL, SALES_DIVISION=SALES_DIVISION,
             CUST_PO=CUST_PO, CUST_PO_DATE=CUST_PO_DATE,
@@ -138,15 +181,14 @@ def create_sto_po(
     PUR_PLANT: str = Field(..., description="Plant"),
     VENDOR: str = Field(..., description="Vendor"),
     DOC_TYPE: str = Field("NB", description="Doc Type"),
-    # [Magic] 這裡也加上隱形容錯
     PR_ITEMS: Annotated[List[PRItem], BeforeValidator(ensure_list_validator)] = Field(..., description="PR Items"),
     LGORT: Optional[str] = Field(None, description="Storage Loc")
 ) -> str:
     """Create STO PO from PR (ZSD_STO_CREATE)"""
     try:
-        client = get_client(SAPConfig.get_url("STO"))
+        service = get_service_proxy("STO")
         pr_payload = [{'ITEM_NO': item.ITEM_NO} for item in PR_ITEMS]
-        res = client.service.ZSD_STO_CREATE(
+        res = service.ZSD_STO_CREATE(
             PR_NUMBER=PR_NUMBER, PR_ITEM={'item': pr_payload},
             PUR_GROUP=PUR_GROUP, PUR_ORG=PUR_ORG,
             PUR_PLANT=PUR_PLANT, VENDOR=VENDOR,
@@ -166,21 +208,20 @@ class DNItem(BaseModel):
 @mcp.tool()
 def create_outbound_delivery(
     SHIP_POINT: str = Field(..., description="Shipping Point"),
-    # [Magic] 隱形容錯
     PO_ITEM: Annotated[List[DNItem], BeforeValidator(ensure_list_validator)] = Field(..., description="Items"),
     DUE_DATE: Optional[str] = Field(None, description="Due Date")
 ) -> str:
     """Create Delivery (ZWS_BAPI_OUTB_DELIVERY_CREATE)"""
     try:
-        client = get_client(SAPConfig.get_url("DN"))
+        service = get_service_proxy("DN")
         items = [x.model_dump() for x in PO_ITEM]
 
-        if hasattr(client.service, 'ZBAPI_OUTB_DELIVERY_CREATE_STO'):
-             res = client.service.ZBAPI_OUTB_DELIVERY_CREATE_STO(
+        if hasattr(service, 'ZBAPI_OUTB_DELIVERY_CREATE_STO'):
+             res = service.ZBAPI_OUTB_DELIVERY_CREATE_STO(
                 SHIP_POINT=SHIP_POINT, PO_ITEM={'item': items}, DUE_DATE=DUE_DATE
             )
         else:
-            res = client.service.ZWS_BAPI_OUTB_DELIVERY_CREATE(
+            res = service.ZWS_BAPI_OUTB_DELIVERY_CREATE(
                 SHIP_POINT=SHIP_POINT, PO_ITEM={'item': items}, DUE_DATE=DUE_DATE
             )
         return f"Result: {res}"
@@ -197,8 +238,8 @@ def create_material_view(
 ) -> str:
     """Maintain Material Views"""
     try:
-        client = get_client(SAPConfig.get_url("MAT"))
-        res = client.service.ZWS_BAPI_MATERIAL_SAVEDATA(
+        service = get_service_proxy("MAT")
+        res = service.ZWS_BAPI_MATERIAL_SAVEDATA(
             HEADDATA={'MATERIAL': MATERIAL},
             SALES_VIEW='X' if SALES_VIEW else '',
             STORAGE_VIEW='X' if STORAGE_VIEW else '',
@@ -215,8 +256,8 @@ def maintain_source_list(
 ) -> str:
     """Maintain Source List"""
     try:
-        client = get_client(SAPConfig.get_url("SRC"))
-        res = client.service.ZSD_SOURCE_LIST_MAINTAIN(
+        service = get_service_proxy("SRC")
+        res = service.ZSD_SOURCE_LIST_MAINTAIN(
             PLANT=PLANT, MATERIAL=MATERIAL, VENDOR=VENDOR,
             VALID_FROM=VALID_FROM, VALID_TO=VALID_TO
         )
@@ -232,8 +273,8 @@ def maintain_info_record(
 ) -> str:
     """Maintain Info Record"""
     try:
-        client = get_client(SAPConfig.get_url("INF"))
-        res = client.service.ZWS_INFO_RECORD_MAINTAIN(
+        service = get_service_proxy("INF")
+        res = service.ZWS_INFO_RECORD_MAINTAIN(
             VENDOR=VENDOR, MATERIAL=MATERIAL, PUR_ORG=PUR_ORG,
             PLANT=PLANT, PRICE=PRICE, PRICE_UNIT=PRICE_UNIT, CURRENCY=CURRENCY
         )
@@ -242,7 +283,7 @@ def maintain_info_record(
         return f"Error (InfoRecord): {str(e)}"
 
 # ==============================================================================
-# 4. 啟動
+# 4. 啟動 (Stdio Mode)
 # ==============================================================================
 if __name__ == "__main__":
     mcp.run()
