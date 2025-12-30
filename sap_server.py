@@ -11,63 +11,90 @@
 import os
 import requests
 import xmltodict
+import re
 from typing import List, Optional, Union, Any, Dict
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 # ==============================================================================
-# 1. 設定區 (Templates)
+# 1. 設定區 (Templates & Headers)
 # ==============================================================================
 class SAPConfig:
     HOST = "vhivcqasci.sap.inventec.com:44300"
 
-    URLS = {
-        "SO": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_bapi_salesorder_create/100/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding",
-        "STO": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zsd_sto_create/100/zsd_sto_create_svr/zsd_sto_create_binding",
-        "DN": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_bapi_outb_delivery_create/100/zws_bapi_outb_delivery_create/bind_dn_create",
-        "MAT": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_bapi_material_savedata/100/zws_bapi_material_savedata/bind_material",
-        "SRC": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zsd_source_list_maintain/100/zsd_source_list_maintain_svr/zsd_source_list_maintain_binding",
-        "INF": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_info_record_maintain/100/zws_info_record_maintain_svr/zws_info_record_maintain_binding"
+    # [API 定義] : (URL, SOAPAction)
+    SERVICES = {
+        "SO": {
+            "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_bapi_salesorder_create/100/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding",
+            "action": '"urn:sap-com:document:sap:rfc:functions:ZWS_BAPI_SALESORDER_CREATE:ZBAPI_SALESORDER_CREATERequest"'
+        },
+        "STO": {
+            "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zsd_sto_create/100/zsd_sto_create_svr/zsd_sto_create_binding",
+            "action": '"urn:sap-com:document:sap:rfc:functions:ZSD_STO_CREATE:ZSD_STO_CREATERequest"'
+        },
+        "DN": {
+            "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_bapi_outb_delivery_create/100/zws_bapi_outb_delivery_create/bind_dn_create",
+            "action": '"urn:sap-com:document:sap:rfc:functions:ZWS_BAPI_OUTB_DELIVERY_CREATE_STO:ZBAPI_OUTB_DELIVERY_CREATE_STORequest"'
+        },
+        "MAT": {
+            "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_bapi_material_savedata/100/zws_bapi_material_savedata/bind_material",
+            "action": '"urn:sap-com:document:sap:rfc:functions:ZWS_BAPI_MATERIAL_SAVEDATA:ZBAPI_MATERIAL_SAVEDATARequest"'
+        },
+        "SRC": {
+            "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zsd_source_list_maintain/100/zsd_source_list_maintain_svr/zsd_source_list_maintain_binding",
+            "action": '"urn:sap-com:document:sap:rfc:functions:ZSD_SOURCE_LIST_MAINTAIN:ZSD_SOURCE_LIST_MAINTAINRequest"'
+        },
+        "INF": {
+            "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_info_record_maintain/100/zws_info_record_maintain_svr/zws_info_record_maintain_binding",
+            "action": '"urn:sap-com:document:sap:rfc:functions:ZWS_INFO_RECORD_MAINTAIN:ZSD_INFO_RECORD_MAINTAINRequest"'
+        }
     }
 
 # ==============================================================================
-# 2. 核心連線功能 (Raw SOAP Caller)
+# 2. 核心連線功能 (Raw SOAP Caller with Headers)
 # ==============================================================================
 mcp = FastMCP("SAP Automation Agent")
 
 class SAPClient:
     def __init__(self, key: str):
-        self.url = SAPConfig.URLS[key]
+        cfg = SAPConfig.SERVICES[key]
+        self.url = cfg["url"]
+        self.action = cfg["action"]
         self.user = os.environ.get("SAP_USER")
         self.password = os.environ.get("SAP_PASSWORD")
         if not self.user or not self.password:
             raise ValueError("Environment variables SAP_USER / SAP_PASSWORD not set.")
 
     def post_soap(self, body_content: str) -> str:
-        """發送標準 SOAP Envelope [cite: 38]"""
-        envelope = f"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:sap-com:document:sap:rfc:functions"><soapenv:Header/><soapenv:Body>{body_content}</soapenv:Body></soapenv:Envelope>"""
+        """發送標準 SOAP Envelope"""
+        # [Helper] 移除多餘空白與換行，確保 XML 緊湊
+        clean_body = re.sub(r'>\s+<', '><', body_content.strip())
+
+        envelope = f"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:sap-com:document:sap:rfc:functions"><soapenv:Header/><soapenv:Body>{clean_body}</soapenv:Body></soapenv:Envelope>"""
+
+        headers = {
+            'Content-Type': 'text/xml; charset=utf-8',
+            'Accept': 'text/xml',
+            'SOAPAction': self.action,
+        }
 
         try:
             response = requests.post(
                 self.url,
                 data=envelope.encode('utf-8'),
                 auth=(self.user, self.password),
-                headers={'Content-Type': 'text/xml; charset=utf-8', 'Accept': 'text/xml'}, # [cite: 33-34]
+                headers=headers,
                 verify=False
             )
 
-            # 解析回傳結果
             if response.status_code == 200:
                 try:
-                    # 嘗試轉成 JSON 格式回傳
                     parsed = xmltodict.parse(response.text)
-                    body = parsed.get('soap-env:Envelope', {}).get('soap-env:Body', {}) or parsed.get('soap-env:Envelope', {}).get('SOAP-ENV:Body', {})
-                    if not body:
-                        # 處理可能的 Namespace 差異 (例如 n0:...)
-                        root_key = next(iter(parsed), None)
-                        if root_key:
-                             body = parsed[root_key].get('SOAP-ENV:Body') or parsed[root_key].get('soap-env:Body')
-                    return str(body) if body else response.text
+                    env = parsed.get('soap-env:Envelope') or parsed.get('soapenv:Envelope') or parsed.get('SOAP-ENV:Envelope')
+                    if env:
+                        body = env.get('soap-env:Body') or env.get('soapenv:Body') or env.get('SOAP-ENV:Body')
+                        return str(body) if body else response.text
+                    return response.text
                 except:
                     return response.text
             else:
@@ -98,6 +125,8 @@ def create_sales_order(
     SHIPPING_POINT: str = "TW01"
 ) -> str:
     """Step 1: Create Sales Order (ZBAPI_SALESORDER_CREATE)"""
+    ORDER_TYPE = ORDER_TYPE or "ZIES"
+    SALES_ORG = SALES_ORG or "TW01"
 
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
@@ -131,7 +160,7 @@ def create_sales_order(
 @mcp.tool()
 def create_sto_po(
     PR_NUMBER: str,
-    PR_ITEM: str, # [cite: 72] <BNFPO>
+    PR_ITEM: str,
     UUID: str = "",
     PUR_GROUP: str = "999",
     PUR_ORG: str = "TW10",
@@ -140,7 +169,6 @@ def create_sto_po(
     DOC_TYPE: str = "NB"
 ) -> str:
     """Step 2: Create STO PO (ZSD_STO_CREATE)"""
-
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
     xml_body = f"""
@@ -172,7 +200,6 @@ def create_outbound_delivery(
     UUID: str = ""
 ) -> str:
     """Step 3: Create Outbound Delivery (ZBAPI_OUTB_DELIVERY_CREATE_STO)"""
-
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
     xml_body = f"""
@@ -201,10 +228,8 @@ def maintain_info_record(
     PLANT: str = "TP01",
     PUR_ORG: str = "TW10"
 ) -> str:
-    """Remediation: Info Record (ZSD_INFO_RECORD_MAINTAIN)"""
-
+    """Remediation: Info Record"""
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
-
     xml_body = f"""
     <urn:ZSD_INFO_RECORD_MAINTAIN>
         {uuid_tag}
@@ -219,18 +244,17 @@ def maintain_info_record(
     """
     return SAPClient("INF").post_soap(xml_body)
 
-# --- [5] Remediation: Material View (Sales) ---
+# --- [5] Remediation: Sales View ---
 @mcp.tool()
 def maintain_sales_view(
     MATERIAL: str,
     SALES_ORG: str,
     DISTR_CHAN: str,
     UUID: str = "",
-    PLANT: str = "TP01",      # Default [cite: 196]
-    DELYG_PLNT: str = "TP01"  # Default [cite: 196]
+    PLANT: str = "TP01",
+    DELYG_PLNT: str = "TP01"
 ) -> str:
     """Remediation: Maintain Sales View"""
-
     if SALES_ORG == "CN60" and DISTR_CHAN == "03":
         PLANT = "CP60"
         DELYG_PLNT = "CP60"
@@ -239,7 +263,6 @@ def maintain_sales_view(
         DELYG_PLNT = "TP01"
 
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
-
     xml_body = f"""
     <urn:ZBAPI_MATERIAL_SAVEDATA>
         {uuid_tag}
@@ -261,17 +284,15 @@ def maintain_sales_view(
     """
     return SAPClient("MAT").post_soap(xml_body)
 
-# --- [6] Remediation: Material View (Warehouse) ---
+# --- [6] Remediation: Warehouse View ---
 @mcp.tool()
 def maintain_warehouse_view(
     MATERIAL: str,
     UUID: str = "",
-    WHSE_NO: str = "WH1" # [cite: 215]
+    WHSE_NO: str = "WH1"
 ) -> str:
     """Remediation: Maintain Warehouse View"""
-
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
-
     xml_body = f"""
     <urn:ZBAPI_MATERIAL_SAVEDATA>
         {uuid_tag}
@@ -297,10 +318,8 @@ def maintain_source_list(
     PLANT: str = "TP01",
     VENDOR: str = "ICC-CP60"
 ) -> str:
-    """Remediation: Source List (ZSD_SOURCE_LIST_MAINTAIN)"""
-
+    """Remediation: Source List"""
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
-
     xml_body = f"""
     <urn:ZSD_SOURCE_LIST_MAINTAIN>
         {uuid_tag}
