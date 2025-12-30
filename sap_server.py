@@ -11,7 +11,6 @@
 import os
 import requests
 import xmltodict
-import re
 from typing import List, Optional, Union, Any, Dict
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -22,7 +21,7 @@ from pydantic import BaseModel, Field
 class SAPConfig:
     HOST = "vhivcqasci.sap.inventec.com:44300"
 
-    # [API 定義] : (URL, SOAPAction)
+    # [API 定義]
     SERVICES = {
         "SO": {
             "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_bapi_salesorder_create/100/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding",
@@ -51,7 +50,7 @@ class SAPConfig:
     }
 
 # ==============================================================================
-# 2. 核心連線功能 (Raw SOAP Caller with Headers)
+# 2. 核心連線功能 (Raw SOAP Caller)
 # ==============================================================================
 mcp = FastMCP("SAP Automation Agent")
 
@@ -67,10 +66,8 @@ class SAPClient:
 
     def post_soap(self, body_content: str) -> str:
         """發送標準 SOAP Envelope"""
-        # [Helper] 移除多餘空白與換行，確保 XML 緊湊
-        clean_body = re.sub(r'>\s+<', '><', body_content.strip())
-
-        envelope = f"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:sap-com:document:sap:rfc:functions"><soapenv:Header/><soapenv:Body>{clean_body}</soapenv:Body></soapenv:Envelope>"""
+        # 嚴格的單行 XML 封裝
+        envelope = f'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:sap-com:document:sap:rfc:functions"><soapenv:Header/><soapenv:Body>{body_content}</soapenv:Body></soapenv:Envelope>'
 
         headers = {
             'Content-Type': 'text/xml; charset=utf-8',
@@ -124,36 +121,21 @@ def create_sales_order(
     PLANT: str = "TP01",
     SHIPPING_POINT: str = "TW01"
 ) -> str:
-    """Step 1: Create Sales Order (ZBAPI_SALESORDER_CREATE)"""
+    [cite_start]"""Step 1: Create Sales Order (ZBAPI_SALESORDER_CREATE) [cite: 38-52]"""
+
     ORDER_TYPE = ORDER_TYPE or "ZIES"
     SALES_ORG = SALES_ORG or "TW01"
+    SALES_CHANNEL = SALES_CHANNEL or "03"
+    SALES_DIVISION = SALES_DIVISION or "01"
+    SOLD_TO_PARTY = SOLD_TO_PARTY or "HRCTO-IMX"
+    SHIP_TO_PARTY = SHIP_TO_PARTY or "HRCTO-MX"
+    PLANT = PLANT or "TP01"
+    SHIPPING_POINT = SHIPPING_POINT or "TW01"
 
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
-    xml_body = f"""
-    <urn:ZBAPI_SALESORDER_CREATE>
-        {uuid_tag}
-        <CUST_PO>{CUST_PO}</CUST_PO>
-        <CUST_PO_DATE>{CUST_PO_DATE}</CUST_PO_DATE>
-        <IT_SO_ITEM>
-            <item>
-                <MATERIAL_NO>000010</MATERIAL_NO>
-                <MATERIAL>{MATERIAL}</MATERIAL>
-                <UNIT>PCE</UNIT>
-                <QTY>{QTY}</QTY>
-                <PLANT>{PLANT}</PLANT>
-                <SHIPPING_POINT>{SHIPPING_POINT}</SHIPPING_POINT>
-                <DELIVERY_DATE>{CUST_PO_DATE}</DELIVERY_DATE>
-            </item>
-        </IT_SO_ITEM>
-        <ORDER_TYPE>{ORDER_TYPE}</ORDER_TYPE>
-        <SALES_CHANNEL>{SALES_CHANNEL}</SALES_CHANNEL>
-        <SALES_DIVISION>{SALES_DIVISION}</SALES_DIVISION>
-        <SALES_ORG>{SALES_ORG}</SALES_ORG>
-        <SHIP_TO_PARTY>{SHIP_TO_PARTY}</SHIP_TO_PARTY>
-        <SOLD_TO_PARTY>{SOLD_TO_PARTY}</SOLD_TO_PARTY>
-    </urn:ZBAPI_SALESORDER_CREATE>
-    """
+    xml_body = f'<urn:ZBAPI_SALESORDER_CREATE>{uuid_tag}<CUST_PO>{CUST_PO}</CUST_PO><CUST_PO_DATE>{CUST_PO_DATE}</CUST_PO_DATE><IT_SO_ITEM><item><MATERIAL_NO>000010</MATERIAL_NO><MATERIAL>{MATERIAL}</MATERIAL><UNIT>PCE</UNIT><QTY>{QTY}</QTY><PLANT>{PLANT}</PLANT><SHIPPING_POINT>{SHIPPING_POINT}</SHIPPING_POINT><DELIVERY_DATE>{CUST_PO_DATE}</DELIVERY_DATE></item></IT_SO_ITEM><ORDER_TYPE>{ORDER_TYPE}</ORDER_TYPE><SALES_CHANNEL>{SALES_CHANNEL}</SALES_CHANNEL><SALES_DIVISION>{SALES_DIVISION}</SALES_DIVISION><SALES_ORG>{SALES_ORG}</SALES_ORG><SHIP_TO_PARTY>{SHIP_TO_PARTY}</SHIP_TO_PARTY><SOLD_TO_PARTY>{SOLD_TO_PARTY}</SOLD_TO_PARTY></urn:ZBAPI_SALESORDER_CREATE>'
+
     return SAPClient("SO").post_soap(xml_body)
 
 # --- [2] Create STO (PO) ---
@@ -168,26 +150,18 @@ def create_sto_po(
     VENDOR: str = "ICC-CP60",
     DOC_TYPE: str = "NB"
 ) -> str:
-    """Step 2: Create STO PO (ZSD_STO_CREATE)"""
+    [cite_start]"""Step 2: Create STO PO (ZSD_STO_CREATE) [cite: 66-78]"""
+
+    PUR_GROUP = PUR_GROUP or "999"
+    PUR_ORG = PUR_ORG or "TW10"
+    PUR_PLANT = PUR_PLANT or "TP01"
+    VENDOR = VENDOR or "ICC-CP60"
+    DOC_TYPE = DOC_TYPE or "NB"
+
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
-    xml_body = f"""
-    <urn:ZSD_STO_CREATE>
-        {uuid_tag}
-        <DOC_TYPE>{DOC_TYPE}</DOC_TYPE>
-        <LGORT/>
-        <PR_NUMBER>{PR_NUMBER}</PR_NUMBER>
-        <PUR_GROUP>{PUR_GROUP}</PUR_GROUP>
-        <PUR_ITEM>
-            <item>
-                <BNFPO>{PR_ITEM}</BNFPO>
-            </item>
-        </PUR_ITEM>
-        <PUR_ORG>{PUR_ORG}</PUR_ORG>
-        <PUR_PLANT>{PUR_PLANT}</PUR_PLANT>
-        <VENDOR>{VENDOR}</VENDOR>
-    </urn:ZSD_STO_CREATE>
-    """
+    xml_body = f'<urn:ZSD_STO_CREATE>{uuid_tag}<DOC_TYPE>{DOC_TYPE}</DOC_TYPE><LGORT/><PR_NUMBER>{PR_NUMBER}</PR_NUMBER><PUR_GROUP>{PUR_GROUP}</PUR_GROUP><PUR_ITEM><item><BNFPO>{PR_ITEM}</BNFPO></item></PUR_ITEM><PUR_ORG>{PUR_ORG}</PUR_ORG><PUR_PLANT>{PUR_PLANT}</PUR_PLANT><VENDOR>{VENDOR}</VENDOR></urn:ZSD_STO_CREATE>'
+
     return SAPClient("STO").post_soap(xml_body)
 
 # --- [3] Create Outbound Delivery (DN) ---
@@ -199,23 +173,13 @@ def create_outbound_delivery(
     SHIPPING_POINT: str,
     UUID: str = ""
 ) -> str:
-    """Step 3: Create Outbound Delivery (ZBAPI_OUTB_DELIVERY_CREATE_STO)"""
+    [cite_start]"""Step 3: Create Outbound Delivery (ZBAPI_OUTB_DELIVERY_CREATE_STO) [cite: 93]"""
+
+    SHIPPING_POINT = SHIPPING_POINT or "TW01"
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
-    xml_body = f"""
-    <urn:ZBAPI_OUTB_DELIVERY_CREATE_STO>
-        {uuid_tag}
-        <PO_ITEM>
-            <item>
-                <REF_DOC>{PO_NUMBER}</REF_DOC>
-                <REF_ITEM>{ITEM_NO}</REF_ITEM>
-                <DLV_QTY>{QUANTITY}</DLV_QTY>
-                <SALES_UNIT>EA</SALES_UNIT>
-            </item>
-        </PO_ITEM>
-        <SHIP_POINT>{SHIPPING_POINT}</SHIP_POINT>
-    </urn:ZBAPI_OUTB_DELIVERY_CREATE_STO>
-    """
+    xml_body = f'<urn:ZBAPI_OUTB_DELIVERY_CREATE_STO>{uuid_tag}<PO_ITEM><item><REF_DOC>{PO_NUMBER}</REF_DOC><REF_ITEM>{ITEM_NO}</REF_ITEM><DLV_QTY>{QUANTITY}</DLV_QTY><SALES_UNIT>EA</SALES_UNIT></item></PO_ITEM><SHIP_POINT>{SHIPPING_POINT}</SHIP_POINT></urn:ZBAPI_OUTB_DELIVERY_CREATE_STO>'
+
     return SAPClient("DN").post_soap(xml_body)
 
 # --- [4] Remediation: Info Record ---
@@ -228,20 +192,17 @@ def maintain_info_record(
     PLANT: str = "TP01",
     PUR_ORG: str = "TW10"
 ) -> str:
-    """Remediation: Info Record"""
+    [cite_start]"""Remediation: Info Record [cite: 147-155]"""
+
+    PRICE = PRICE or "999"
+    VENDOR = VENDOR or "ICC-CP60"
+    PLANT = PLANT or "TP01"
+    PUR_ORG = PUR_ORG or "TW10"
+
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
-    xml_body = f"""
-    <urn:ZSD_INFO_RECORD_MAINTAIN>
-        {uuid_tag}
-        <CURRENCY>USD</CURRENCY>
-        <MATERIAL>{MATERIAL}</MATERIAL>
-        <PLANT>{PLANT}</PLANT>
-        <PRICE>{PRICE}</PRICE>
-        <PRICE_UNIT>1</PRICE_UNIT>
-        <PUR_ORG>{PUR_ORG}</PUR_ORG>
-        <VENDOR>{VENDOR}</VENDOR>
-    </urn:ZSD_INFO_RECORD_MAINTAIN>
-    """
+
+    xml_body = f'<urn:ZSD_INFO_RECORD_MAINTAIN>{uuid_tag}<CURRENCY>USD</CURRENCY><MATERIAL>{MATERIAL}</MATERIAL><PLANT>{PLANT}</PLANT><PRICE>{PRICE}</PRICE><PRICE_UNIT>1</PRICE_UNIT><PUR_ORG>{PUR_ORG}</PUR_ORG><VENDOR>{VENDOR}</VENDOR></urn:ZSD_INFO_RECORD_MAINTAIN>'
+
     return SAPClient("INF").post_soap(xml_body)
 
 # --- [5] Remediation: Sales View ---
@@ -254,7 +215,8 @@ def maintain_sales_view(
     PLANT: str = "TP01",
     DELYG_PLNT: str = "TP01"
 ) -> str:
-    """Remediation: Maintain Sales View"""
+    [cite_start]"""Remediation: Maintain Sales View [cite: 171-187]"""
+
     if SALES_ORG == "CN60" and DISTR_CHAN == "03":
         PLANT = "CP60"
         DELYG_PLNT = "CP60"
@@ -263,25 +225,9 @@ def maintain_sales_view(
         DELYG_PLNT = "TP01"
 
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
-    xml_body = f"""
-    <urn:ZBAPI_MATERIAL_SAVEDATA>
-        {uuid_tag}
-        <HEADDATA>
-            <MATERIAL>{MATERIAL}</MATERIAL>
-            <SALES_VIEW>X</SALES_VIEW>
-            <STORAGE_VIEW></STORAGE_VIEW>
-            <WAREHOUSE_VIEW></WAREHOUSE_VIEW>
-        </HEADDATA>
-        <PLANTDATA>
-            <PLANT>{PLANT}</PLANT>
-        </PLANTDATA>
-        <SALESDATA>
-            <SALES_ORG>{SALES_ORG}</SALES_ORG>
-            <DISTR_CHAN>{DISTR_CHAN}</DISTR_CHAN>
-            <DELYG_PLNT>{DELYG_PLNT}</DELYG_PLNT>
-        </SALESDATA>
-    </urn:ZBAPI_MATERIAL_SAVEDATA>
-    """
+
+    xml_body = f'<urn:ZBAPI_MATERIAL_SAVEDATA>{uuid_tag}<HEADDATA><MATERIAL>{MATERIAL}</MATERIAL><SALES_VIEW>X</SALES_VIEW><STORAGE_VIEW></STORAGE_VIEW><WAREHOUSE_VIEW></WAREHOUSE_VIEW></HEADDATA><PLANTDATA><PLANT>{PLANT}</PLANT></PLANTDATA><SALESDATA><SALES_ORG>{SALES_ORG}</SALES_ORG><DISTR_CHAN>{DISTR_CHAN}</DISTR_CHAN><DELYG_PLNT>{DELYG_PLNT}</DELYG_PLNT></SALESDATA></urn:ZBAPI_MATERIAL_SAVEDATA>'
+
     return SAPClient("MAT").post_soap(xml_body)
 
 # --- [6] Remediation: Warehouse View ---
@@ -291,22 +237,13 @@ def maintain_warehouse_view(
     UUID: str = "",
     WHSE_NO: str = "WH1"
 ) -> str:
-    """Remediation: Maintain Warehouse View"""
+    [cite_start]"""Remediation: Maintain Warehouse View [cite: 206-217]"""
+
+    WHSE_NO = WHSE_NO or "WH1"
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
-    xml_body = f"""
-    <urn:ZBAPI_MATERIAL_SAVEDATA>
-        {uuid_tag}
-        <HEADDATA>
-            <MATERIAL>{MATERIAL}</MATERIAL>
-            <SALES_VIEW></SALES_VIEW>
-            <STORAGE_VIEW></STORAGE_VIEW>
-            <WAREHOUSE_VIEW>X</WAREHOUSE_VIEW>
-        </HEADDATA>
-        <WAREHOUSENUMBERDATA>
-            <WHSE_NO>{WHSE_NO}</WHSE_NO>
-        </WAREHOUSENUMBERDATA>
-    </urn:ZBAPI_MATERIAL_SAVEDATA>
-    """
+
+    xml_body = f'<urn:ZBAPI_MATERIAL_SAVEDATA>{uuid_tag}<HEADDATA><MATERIAL>{MATERIAL}</MATERIAL><SALES_VIEW></SALES_VIEW><STORAGE_VIEW></STORAGE_VIEW><WAREHOUSE_VIEW>X</WAREHOUSE_VIEW></HEADDATA><WAREHOUSENUMBERDATA><WHSE_NO>{WHSE_NO}</WHSE_NO></WAREHOUSENUMBERDATA></urn:ZBAPI_MATERIAL_SAVEDATA>'
+
     return SAPClient("MAT").post_soap(xml_body)
 
 # --- [7] Remediation: Source List ---
@@ -318,18 +255,14 @@ def maintain_source_list(
     PLANT: str = "TP01",
     VENDOR: str = "ICC-CP60"
 ) -> str:
-    """Remediation: Source List"""
+    [cite_start]"""Remediation: Source List [cite: 257]"""
+
+    PLANT = PLANT or "TP01"
+    VENDOR = VENDOR or "ICC-CP60"
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
-    xml_body = f"""
-    <urn:ZSD_SOURCE_LIST_MAINTAIN>
-        {uuid_tag}
-        <MATERIAL>{MATERIAL}</MATERIAL>
-        <PLANT>{PLANT}</PLANT>
-        <VENDOR>{VENDOR}</VENDOR>
-        <VALID_FROM>{VALID_FROM}</VALID_FROM>
-        <VALID_TO>9999-12-31</VALID_TO>
-    </urn:ZSD_SOURCE_LIST_MAINTAIN>
-    """
+
+    xml_body = f'<urn:ZSD_SOURCE_LIST_MAINTAIN>{uuid_tag}<MATERIAL>{MATERIAL}</MATERIAL><PLANT>{PLANT}</PLANT><VENDOR>{VENDOR}</VENDOR><VALID_FROM>{VALID_FROM}</VALID_FROM><VALID_TO>9999-12-31</VALID_TO></urn:ZSD_SOURCE_LIST_MAINTAIN>'
+
     return SAPClient("SRC").post_soap(xml_body)
 
 # ==============================================================================
