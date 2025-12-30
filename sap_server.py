@@ -4,18 +4,37 @@
 #     "mcp[cli]",
 #     "zeep",
 #     "requests",
-#     "pydantic",
+#     "pydantic>=2.0",
 # ]
 # ///
 
 import os
 import requests
 import sys
+from typing import List, Optional, Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from zeep import Client, Settings
 from zeep.transports import Transport
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from pydantic.functional_validators import BeforeValidator
+
+# ==============================================================================
+# 0. 核心工具 - 自動將「單一物件」轉為「列表」
+# ==============================================================================
+def ensure_list_validator(v: Any) -> Any:
+    """
+    如果傳進來的是單一物件 (dict)，就自動包成 list。
+    如果已經是 list 或 None，就原樣回傳。
+    這樣可以讓 UI 顯示為 List，但容許使用者只傳單個物件。
+    """
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return v
+    return [v]
+
+# 定義一個「寬容列表」型別，專門用來修復 UI 傳來的資料
+SmartList = Annotated[List, BeforeValidator(ensure_list_validator)]
 
 # ==============================================================================
 # 1. 設定區 (Configuration)
@@ -25,7 +44,6 @@ class SAPConfig:
     CLIENT = "100"
     PROTOCOL = "https"
 
-    # 服務路徑清單
     SERVICES = {
         "SO": "zws_bapi_salesorder_create/{client}/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding",
         "STO": "zsd_sto_create/{client}/zsd_sto_create_svr/zsd_sto_create_binding",
@@ -91,7 +109,7 @@ def create_sales_order(
     CUST_PO_DATE: str = Field(..., description="Customer PO Date YYYY-MM-DD"),
     SOLD_TO_PARTY: str = Field(..., description="Sold-To Party"),
     SHIP_TO_PARTY: str = Field(..., description="Ship-To Party"),
-    SO_ITEM: List[SOItem] = Field(..., description="Items")
+    SO_ITEM: Annotated[List[SOItem], BeforeValidator(ensure_list_validator)] = Field(..., description="Items")
 ) -> str:
     """Create Sales Order (ZBAPI_SALESORDER_CREATE)"""
     try:
@@ -120,7 +138,8 @@ def create_sto_po(
     PUR_PLANT: str = Field(..., description="Plant"),
     VENDOR: str = Field(..., description="Vendor"),
     DOC_TYPE: str = Field("NB", description="Doc Type"),
-    PR_ITEMS: List[PRItem] = Field(..., description="PR Items"),
+    # [Magic] 這裡也加上隱形容錯
+    PR_ITEMS: Annotated[List[PRItem], BeforeValidator(ensure_list_validator)] = Field(..., description="PR Items"),
     LGORT: Optional[str] = Field(None, description="Storage Loc")
 ) -> str:
     """Create STO PO from PR (ZSD_STO_CREATE)"""
@@ -147,7 +166,8 @@ class DNItem(BaseModel):
 @mcp.tool()
 def create_outbound_delivery(
     SHIP_POINT: str = Field(..., description="Shipping Point"),
-    PO_ITEM: List[DNItem] = Field(..., description="Items"),
+    # [Magic] 隱形容錯
+    PO_ITEM: Annotated[List[DNItem], BeforeValidator(ensure_list_validator)] = Field(..., description="Items"),
     DUE_DATE: Optional[str] = Field(None, description="Due Date")
 ) -> str:
     """Create Delivery (ZWS_BAPI_OUTB_DELIVERY_CREATE)"""
@@ -155,14 +175,11 @@ def create_outbound_delivery(
         client = get_client(SAPConfig.get_url("DN"))
         items = [x.model_dump() for x in PO_ITEM]
 
-        # 嘗試呼叫 ZBAPI_OUTB_DELIVERY_CREATE_STO
-        # 這是根據您提供的 CSV 與 網址綜合判斷的正確 Function Name
         if hasattr(client.service, 'ZBAPI_OUTB_DELIVERY_CREATE_STO'):
              res = client.service.ZBAPI_OUTB_DELIVERY_CREATE_STO(
                 SHIP_POINT=SHIP_POINT, PO_ITEM={'item': items}, DUE_DATE=DUE_DATE
             )
         else:
-            # Fallback
             res = client.service.ZWS_BAPI_OUTB_DELIVERY_CREATE(
                 SHIP_POINT=SHIP_POINT, PO_ITEM={'item': items}, DUE_DATE=DUE_DATE
             )
@@ -225,8 +242,7 @@ def maintain_info_record(
         return f"Error (InfoRecord): {str(e)}"
 
 # ==============================================================================
-# 4. 啟動 (Stdio Mode)
+# 4. 啟動
 # ==============================================================================
 if __name__ == "__main__":
-    # 這裡改回了 mcp.run()，這樣您的 EMCP 平台就能正確讀取了
     mcp.run()
