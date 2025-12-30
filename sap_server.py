@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from pydantic.functional_validators import BeforeValidator
 
 # ==============================================================================
-# 0. 核心工具
+# 0. 核心工具 - UI 容錯
 # ==============================================================================
 def ensure_list_validator(v: Any) -> Any:
     if v is None:
@@ -31,42 +31,20 @@ def ensure_list_validator(v: Any) -> Any:
 SmartList = Annotated[List, BeforeValidator(ensure_list_validator)]
 
 # ==============================================================================
-# 1. 設定區 (Configuration) - 包含 Binding Name
+# 1. 設定區 (Configuration)
 # ==============================================================================
 class SAPConfig:
     HOST = "vhivcqasci.sap.inventec.com:44300"
     CLIENT = "100"
     PROTOCOL = "https"
-    NAMESPACE = "urn:sap-com:document:sap:rfc:functions" # SAP 標準 Namespace
 
-    # [設定結構]
-    # path: 網址路徑 (不含 host)
-    # binding: WSDL 內的 Binding 名稱 (通常對應 URL 最後一段的大寫)
     SERVICES = {
-        "SO": {
-            "path": "zws_bapi_salesorder_create/{client}/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding",
-            "binding": "ZWS_BAPI_SALESORDER_CREATE_BINDING"
-        },
-        "STO": {
-            "path": "zsd_sto_create/{client}/zsd_sto_create_svr/zsd_sto_create_binding",
-            "binding": "ZSD_STO_CREATE_BINDING"
-        },
-        "DN": {
-            "path": "zws_bapi_outb_delivery_create/{client}/zws_bapi_outb_delivery_create/bind_dn_create",
-            "binding": "BIND_DN_CREATE"
-        },
-        "MAT": {
-            "path": "zws_bapi_material_savedata/{client}/zws_bapi_material_savedata/bind_material",
-            "binding": "BIND_MATERIAL"
-        },
-        "SRC": {
-            "path": "zsd_source_list_maintain/{client}/zsd_source_list_maintain_svr/zsd_source_list_maintain_binding",
-            "binding": "ZSD_SOURCE_LIST_MAINTAIN_BINDING"
-        },
-        "INF": {
-            "path": "zws_info_record_maintain/{client}/zws_info_record_maintain_svr/zws_info_record_maintain_binding",
-            "binding": "ZWS_INFO_RECORD_MAINTAIN_BINDING"
-        }
+        "SO": "zws_bapi_salesorder_create/{client}/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding",
+        "STO": "zsd_sto_create/{client}/zsd_sto_create_svr/zsd_sto_create_binding",
+        "DN": "zws_bapi_outb_delivery_create/{client}/zws_bapi_outb_delivery_create/bind_dn_create",
+        "MAT": "zws_bapi_material_savedata/{client}/zws_bapi_material_savedata/bind_material",
+        "SRC": "zsd_source_list_maintain/{client}/zsd_source_list_maintain_svr/zsd_source_list_maintain_binding",
+        "INF": "zws_info_record_maintain/{client}/zws_info_record_maintain_svr/zws_info_record_maintain_binding"
     }
 
     @classmethod
@@ -74,20 +52,15 @@ class SAPConfig:
         if key not in cls.SERVICES:
             raise ValueError(f"Unknown SAP Service Key: {key}")
 
-        cfg = cls.SERVICES[key]
-        path = cfg["path"].format(client=cls.CLIENT)
+        path = cls.SERVICES[key].format(client=cls.CLIENT)
 
-        # 1. WSDL URL (下載定義用)
+        # 1. WSDL URL
         wsdl_url = f"{cls.PROTOCOL}://{cls.HOST}/sap/bc/srt/rfc/sap/{path}?wsdl"
 
-        # 2. Service Address (實際呼叫用，通常就是不含 ?wsdl 的網址)
+        # 2. Service Address
         address = f"{cls.PROTOCOL}://{cls.HOST}/sap/bc/srt/rfc/sap/{path}"
 
-        # 3. Binding QName (告訴 zeep 綁定哪一個 port)
-        # 格式: {Namespace}BindingName
-        binding_name = f"{{{cls.NAMESPACE}}}{cfg['binding']}"
-
-        return wsdl_url, address, binding_name
+        return wsdl_url, address
 
 # ==============================================================================
 # 2. 核心連線功能
@@ -96,8 +69,8 @@ mcp = FastMCP("SAP All-in-One Service")
 
 def get_service_proxy(key: str):
     """
-    建立 SAP 連線並強制綁定到正確的 Service/Port
-    解決 'No default service defined' 錯誤
+    建立 SAP 連線，自動尋找 WSDL 內的第一個可用 Port
+    解決 'No binding found' 與 'No default service' 問題
     """
     SAP_USER = os.environ.get("SAP_USER")
     SAP_PASSWORD = os.environ.get("SAP_PASSWORD")
@@ -105,10 +78,8 @@ def get_service_proxy(key: str):
     if not SAP_USER or not SAP_PASSWORD:
         raise ValueError("Error: SAP_USER or SAP_PASSWORD environment variables are not set.")
 
-    # 1. 取得連線資訊
-    wsdl_url, address, binding_name = SAPConfig.get_info(key)
+    wsdl_url, override_address = SAPConfig.get_info(key)
 
-    # 2. 建立 Session
     session = requests.Session()
     session.auth = (SAP_USER, SAP_PASSWORD)
     session.verify = False
@@ -116,15 +87,41 @@ def get_service_proxy(key: str):
     settings = Settings(strict=False, xml_huge_tree=True)
 
     try:
-        # 3. 下載 WSDL
+        # 1. 下載 WSDL
         client = Client(wsdl=wsdl_url, transport=transport, settings=settings)
 
-        # 4. 強制建立 Service Proxy
-        service = client.create_service(binding_name, address)
+        # 2. [智慧邏輯] 自動尋找第一個可用的 Service 和 Port
+        if not client.wsdl.services:
+            raise ValueError("WSDL contains no services.")
 
-        return service
+        # 取得第一個 Service
+        first_service_name = next(iter(client.wsdl.services))
+        service = client.wsdl.services[first_service_name]
+
+        if not service.ports:
+            raise ValueError(f"Service {first_service_name} contains no ports.")
+
+        # 取得第一個 Port
+        first_port_name = next(iter(service.ports))
+        port = service.ports[first_port_name]
+
+        # 取得 Binding Name
+        binding_name = port.binding.name
+
+        # 3. 建立連線
+        return client.create_service(binding_name, override_address)
+
     except Exception as e:
-        raise ConnectionError(f"Failed to create service for {key}. WSDL: {wsdl_url}. Error: {e}")
+        # 錯誤處理：把 WSDL 裡有的 Service 都列出來，方便除錯
+        avail = []
+        try:
+            for s in client.wsdl.services.values():
+                for p in s.ports.values():
+                    avail.append(f"Service: {s.name}, Port: {p.name}, Binding: {p.binding.name}")
+        except:
+            pass
+
+        raise ConnectionError(f"Failed to init {key}. \nError: {e}\nAvailable Ports: {avail}")
 
 # ==============================================================================
 # 3. 工具定義 (Tools)
@@ -156,7 +153,6 @@ def create_sales_order(
     """Create Sales Order (ZBAPI_SALESORDER_CREATE)"""
     try:
         service = get_service_proxy("SO")
-
         items = [x.model_dump(exclude_none=True) for x in SO_ITEM]
         res = service.ZBAPI_SALESORDER_CREATE(
             ORDER_TYPE=ORDER_TYPE, SALES_ORG=SALES_ORG,
