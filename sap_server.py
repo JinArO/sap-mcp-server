@@ -20,9 +20,7 @@ from pydantic import BaseModel, Field
 # ==============================================================================
 class SAPConfig:
     HOST = "vhivcqasci.sap.inventec.com:44300"
-    # 根據文件，不需要 Client 變數，因為 URL 已經包含 /100/
 
-    # https://www.merriam-webster.com/dictionary/define
     URLS = {
         "SO": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_bapi_salesorder_create/100/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding",
         "STO": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zsd_sto_create/100/zsd_sto_create_svr/zsd_sto_create_binding",
@@ -45,34 +43,33 @@ class SAPClient:
         if not self.user or not self.password:
             raise ValueError("Environment variables SAP_USER / SAP_PASSWORD not set.")
 
-    def post_soap(self, body_content: str, action: str = "") -> str:
-        """發送標準 SOAP Envelope"""
+    def post_soap(self, body_content: str) -> str:
+        """發送標準 SOAP Envelope [cite: 38]"""
         envelope = f"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:sap-com:document:sap:rfc:functions"><soapenv:Header/><soapenv:Body>{body_content}</soapenv:Body></soapenv:Envelope>"""
-
-        headers = {
-            'Content-Type': 'text/xml',
-            'Accept': 'text/xml',
-            'Authorization': f'Basic REMOVED_IN_LOG', # 實際發送時 requests 會處理 auth
-        }
 
         try:
             response = requests.post(
                 self.url,
                 data=envelope.encode('utf-8'),
                 auth=(self.user, self.password),
-                headers={'Content-Type': 'text/xml; charset=utf-8'},
+                headers={'Content-Type': 'text/xml; charset=utf-8', 'Accept': 'text/xml'}, # [cite: 33-34]
                 verify=False
             )
 
             # 解析回傳結果
             if response.status_code == 200:
                 try:
-                    # 嘗試轉成 JSON 格式回傳，方便閱讀
+                    # 嘗試轉成 JSON 格式回傳
                     parsed = xmltodict.parse(response.text)
-                    body = parsed.get('soap-env:Envelope', {}).get('soap-env:Body', {})
-                    return str(body) # 回傳 Dictionary 字串
+                    body = parsed.get('soap-env:Envelope', {}).get('soap-env:Body', {}) or parsed.get('soap-env:Envelope', {}).get('SOAP-ENV:Body', {})
+                    if not body:
+                        # 處理可能的 Namespace 差異 (例如 n0:...)
+                        root_key = next(iter(parsed), None)
+                        if root_key:
+                             body = parsed[root_key].get('SOAP-ENV:Body') or parsed[root_key].get('soap-env:Body')
+                    return str(body) if body else response.text
                 except:
-                    return response.text # 解析失敗就回傳原始 XML
+                    return response.text
             else:
                 return f"HTTP Error {response.status_code}: {response.text}"
 
@@ -80,7 +77,7 @@ class SAPClient:
             return f"Connection Error: {str(e)}"
 
 # ==============================================================================
-# 3. 工具定義 (Tools) - 依照文件模板實作
+# 3. 工具定義 (Tools)
 # ==============================================================================
 
 # --- [1] Create Sales Order (SO) ---
@@ -91,7 +88,6 @@ def create_sales_order(
     MATERIAL: str,
     QTY: float,
     UUID: str = "",
-    # 以下參數提供預設值
     ORDER_TYPE: str = "ZIES",
     SALES_ORG: str = "TW01",
     SALES_CHANNEL: str = "03",
@@ -102,10 +98,12 @@ def create_sales_order(
     SHIPPING_POINT: str = "TW01"
 ) -> str:
     """Step 1: Create Sales Order (ZBAPI_SALESORDER_CREATE)"""
-    # 注意: 文件中 Item 包在 <IT_SO_ITEM><item>...</item></IT_SO_ITEM>
+
+    uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
+
     xml_body = f"""
     <urn:ZBAPI_SALESORDER_CREATE>
-        <UUID>{UUID}</UUID>
+        {uuid_tag}
         <CUST_PO>{CUST_PO}</CUST_PO>
         <CUST_PO_DATE>{CUST_PO_DATE}</CUST_PO_DATE>
         <IT_SO_ITEM>
@@ -133,9 +131,8 @@ def create_sales_order(
 @mcp.tool()
 def create_sto_po(
     PR_NUMBER: str,
-    PR_ITEM: str, # 這是 PR Item No (文件 Source 72 <BNFPO>)
+    PR_ITEM: str, # [cite: 72] <BNFPO>
     UUID: str = "",
-    # 預設值
     PUR_GROUP: str = "999",
     PUR_ORG: str = "TW10",
     PUR_PLANT: str = "TP01",
@@ -143,10 +140,12 @@ def create_sto_po(
     DOC_TYPE: str = "NB"
 ) -> str:
     """Step 2: Create STO PO (ZSD_STO_CREATE)"""
-    # 注意: 這裡用 <PUR_ITEM><item><BNFPO>...</BNFPO></item></PUR_ITEM>
+
+    uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
+
     xml_body = f"""
     <urn:ZSD_STO_CREATE>
-        <UUID>{UUID}</UUID>
+        {uuid_tag}
         <DOC_TYPE>{DOC_TYPE}</DOC_TYPE>
         <LGORT/>
         <PR_NUMBER>{PR_NUMBER}</PR_NUMBER>
@@ -173,10 +172,12 @@ def create_outbound_delivery(
     UUID: str = ""
 ) -> str:
     """Step 3: Create Outbound Delivery (ZBAPI_OUTB_DELIVERY_CREATE_STO)"""
-    # 注意: <PO_ITEM><item><REF_DOC>...
+
+    uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
+
     xml_body = f"""
     <urn:ZBAPI_OUTB_DELIVERY_CREATE_STO>
-        <UUID>{UUID}</UUID>
+        {uuid_tag}
         <PO_ITEM>
             <item>
                 <REF_DOC>{PO_NUMBER}</REF_DOC>
@@ -195,16 +196,18 @@ def create_outbound_delivery(
 def maintain_info_record(
     MATERIAL: str,
     UUID: str = "",
-    # 預設補救值
     PRICE: str = "999",
     VENDOR: str = "ICC-CP60",
     PLANT: str = "TP01",
     PUR_ORG: str = "TW10"
 ) -> str:
     """Remediation: Info Record (ZSD_INFO_RECORD_MAINTAIN)"""
+
+    uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
+
     xml_body = f"""
     <urn:ZSD_INFO_RECORD_MAINTAIN>
-        <UUID>{UUID}</UUID>
+        {uuid_tag}
         <CURRENCY>USD</CURRENCY>
         <MATERIAL>{MATERIAL}</MATERIAL>
         <PLANT>{PLANT}</PLANT>
@@ -223,11 +226,11 @@ def maintain_sales_view(
     SALES_ORG: str,
     DISTR_CHAN: str,
     UUID: str = "",
-    PLANT: str = "TP01",      # Default based on rule
-    DELYG_PLNT: str = "TP01"  # Default based on rule
+    PLANT: str = "TP01",      # Default [cite: 196]
+    DELYG_PLNT: str = "TP01"  # Default [cite: 196]
 ) -> str:
     """Remediation: Maintain Sales View"""
-    # 邏輯判斷: 若 Org=CN60/03 -> Plant=CP60; 若 TW01/03 -> TP01
+
     if SALES_ORG == "CN60" and DISTR_CHAN == "03":
         PLANT = "CP60"
         DELYG_PLNT = "CP60"
@@ -235,9 +238,11 @@ def maintain_sales_view(
         PLANT = "TP01"
         DELYG_PLNT = "TP01"
 
+    uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
+
     xml_body = f"""
     <urn:ZBAPI_MATERIAL_SAVEDATA>
-        <UUID>{UUID}</UUID>
+        {uuid_tag}
         <HEADDATA>
             <MATERIAL>{MATERIAL}</MATERIAL>
             <SALES_VIEW>X</SALES_VIEW>
@@ -261,12 +266,15 @@ def maintain_sales_view(
 def maintain_warehouse_view(
     MATERIAL: str,
     UUID: str = "",
-    WHSE_NO: str = "WH1"
+    WHSE_NO: str = "WH1" # [cite: 215]
 ) -> str:
     """Remediation: Maintain Warehouse View"""
+
+    uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
+
     xml_body = f"""
     <urn:ZBAPI_MATERIAL_SAVEDATA>
-        <UUID>{UUID}</UUID>
+        {uuid_tag}
         <HEADDATA>
             <MATERIAL>{MATERIAL}</MATERIAL>
             <SALES_VIEW></SALES_VIEW>
@@ -284,15 +292,18 @@ def maintain_warehouse_view(
 @mcp.tool()
 def maintain_source_list(
     MATERIAL: str,
-    VALID_FROM: str, # Format YYYY-MM-DD (e.g. CUST_PO_DATE)
+    VALID_FROM: str,
     UUID: str = "",
     PLANT: str = "TP01",
     VENDOR: str = "ICC-CP60"
 ) -> str:
     """Remediation: Source List (ZSD_SOURCE_LIST_MAINTAIN)"""
+
+    uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
+
     xml_body = f"""
     <urn:ZSD_SOURCE_LIST_MAINTAIN>
-        <UUID>{UUID}</UUID>
+        {uuid_tag}
         <MATERIAL>{MATERIAL}</MATERIAL>
         <PLANT>{PLANT}</PLANT>
         <VENDOR>{VENDOR}</VENDOR>
