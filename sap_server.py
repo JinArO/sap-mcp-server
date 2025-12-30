@@ -51,15 +51,9 @@ class SAPConfig:
     def get_info(cls, key: str):
         if key not in cls.SERVICES:
             raise ValueError(f"Unknown SAP Service Key: {key}")
-
         path = cls.SERVICES[key].format(client=cls.CLIENT)
-
-        # 1. WSDL URL
         wsdl_url = f"{cls.PROTOCOL}://{cls.HOST}/sap/bc/srt/rfc/sap/{path}?wsdl"
-
-        # 2. Service Address
         address = f"{cls.PROTOCOL}://{cls.HOST}/sap/bc/srt/rfc/sap/{path}"
-
         return wsdl_url, address
 
 # ==============================================================================
@@ -69,8 +63,9 @@ mcp = FastMCP("SAP All-in-One Service")
 
 def get_service_proxy(key: str):
     """
-    建立 SAP 連線，自動尋找 WSDL 內的第一個可用 Port
-    解決 'No binding found' 與 'No default service' 問題
+    建立 SAP 連線，具備兩層偵測機制：
+    1. 嘗試找標準 WSDL 的 Service/Port
+    2. 若無 Service，直接抓 Binding 並手動建立連線 (Fix: WSDL contains no services)
     """
     SAP_USER = os.environ.get("SAP_USER")
     SAP_PASSWORD = os.environ.get("SAP_PASSWORD")
@@ -90,38 +85,24 @@ def get_service_proxy(key: str):
         # 1. 下載 WSDL
         client = Client(wsdl=wsdl_url, transport=transport, settings=settings)
 
-        # 2. [智慧邏輯] 自動尋找第一個可用的 Service 和 Port
-        if not client.wsdl.services:
-            raise ValueError("WSDL contains no services.")
+        # 2.
+        if client.wsdl.services:
+            # 標準 WSDL，有 Service 定義
+            first_service = next(iter(client.wsdl.services.values()))
+            first_port = next(iter(first_service.ports.values()))
+            binding_name = first_port.binding.name
+        elif client.wsdl.bindings:
+            # 殘缺 WSDL (無 Service)，直接抓 Binding
+            # print(f"Debug: No services found, using first binding.", file=sys.stderr)
+            binding_name = next(iter(client.wsdl.bindings))
+        else:
+            raise ValueError("WSDL contains neither Services nor Bindings.")
 
-        # 取得第一個 Service
-        first_service_name = next(iter(client.wsdl.services))
-        service = client.wsdl.services[first_service_name]
-
-        if not service.ports:
-            raise ValueError(f"Service {first_service_name} contains no ports.")
-
-        # 取得第一個 Port
-        first_port_name = next(iter(service.ports))
-        port = service.ports[first_port_name]
-
-        # 取得 Binding Name
-        binding_name = port.binding.name
-
-        # 3. 建立連線
+        # 3. 強制建立連線
         return client.create_service(binding_name, override_address)
 
     except Exception as e:
-        # 錯誤處理：把 WSDL 裡有的 Service 都列出來，方便除錯
-        avail = []
-        try:
-            for s in client.wsdl.services.values():
-                for p in s.ports.values():
-                    avail.append(f"Service: {s.name}, Port: {p.name}, Binding: {p.binding.name}")
-        except:
-            pass
-
-        raise ConnectionError(f"Failed to init {key}. \nError: {e}\nAvailable Ports: {avail}")
+        raise ConnectionError(f"Failed to init {key}. Error: {e}")
 
 # ==============================================================================
 # 3. 工具定義 (Tools)
