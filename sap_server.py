@@ -11,19 +11,17 @@
 import os
 import requests
 import xmltodict
-from typing import List, Optional, Union, Any, Dict
+from typing import List, Optional
 from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 # ==============================================================================
-# 1. 設定區 (Configuration)
+# Configuration
 # ==============================================================================
 class SAPConfig:
-    # [API 定義] - 資料來源: poc_inventec_1104.docx
     SERVICES = {
         "SO": {
             "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_bapi_salesorder_create/100/zws_bapi_salesorder_create_sev/zws_bapi_salesorder_create_binding",
-            # 注意: SOAPAction 必須包含外層單引號和內層雙引號 (Source 35)
             "action": '"urn:sap-com:document:sap:rfc:functions:ZWS_BAPI_SALESORDER_CREATE:ZBAPI_SALESORDER_CREATERequest"'
         },
         "STO": {
@@ -49,7 +47,7 @@ class SAPConfig:
     }
 
 # ==============================================================================
-# 2. 核心連線功能 (Raw SOAP Caller)
+# Core Client
 # ==============================================================================
 mcp = FastMCP("SAP Automation Agent")
 
@@ -64,8 +62,7 @@ class SAPClient:
             raise ValueError("Environment variables SAP_USER / SAP_PASSWORD not set.")
 
     def post_soap(self, body_content: str) -> str:
-        """發送標準 SOAP Envelope"""
-        # [Fix] 移除 XML 宣告，避免部分 SAP Parser 解析問題，保持最單純
+        # Standard SOAP Envelope without XML declaration
         envelope = f'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:sap-com:document:sap:rfc:functions"><soapenv:Header/><soapenv:Body>{body_content}</soapenv:Body></soapenv:Envelope>'
 
         headers = {
@@ -86,6 +83,7 @@ class SAPClient:
             if response.status_code == 200:
                 try:
                     parsed = xmltodict.parse(response.text)
+                    # Try to extract Body content
                     env = parsed.get('soap-env:Envelope') or parsed.get('soapenv:Envelope') or parsed.get('SOAP-ENV:Envelope')
                     if env:
                         body = env.get('soap-env:Body') or env.get('soapenv:Body') or env.get('SOAP-ENV:Body')
@@ -100,10 +98,9 @@ class SAPClient:
             return f"Connection Error: {str(e)}"
 
 # ==============================================================================
-# 3. 工具定義 (Tools)
+# Tools
 # ==============================================================================
 
-# --- [1] Create Sales Order (SO) ---
 @mcp.tool()
 def create_sales_order(
     CUST_PO: str,
@@ -120,9 +117,9 @@ def create_sales_order(
     PLANT: str = "TP01",
     SHIPPING_POINT: str = "TW01"
 ) -> str:
-    """Step 1: Create Sales Order (ZBAPI_SALESORDER_CREATE)"""
+    """Step 1: Create Sales Order"""
 
-    # [關鍵防呆] 強制使用預設值，防止 None 傳入導致 Header Missing
+    # Enforce defaults to prevent 'Mandatory header fields missing'
     order_type_val = ORDER_TYPE if ORDER_TYPE else "ZIES"
     sales_org_val = SALES_ORG if SALES_ORG else "TW01"
     sales_channel_val = SALES_CHANNEL if SALES_CHANNEL else "03"
@@ -132,21 +129,16 @@ def create_sales_order(
     plant_val = PLANT if PLANT else "TP01"
     shipping_pt_val = SHIPPING_POINT if SHIPPING_POINT else "TW01"
 
-    # 防止 CUST_PO 為空
-    cust_po_val = CUST_PO if CUST_PO else "TEST_PO_001"
+    cust_po_val = CUST_PO if CUST_PO else "TEST_PO"
     cust_po_date_val = CUST_PO_DATE if CUST_PO_DATE else "2025-01-01"
 
-    # UUID 標籤 (若有值才產生) [Source 2-3]
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
-    # [XML 結構重組] 嚴格依照 Word 文件 [Source 38-52] 的順序：
-    # 順序: UUID -> CUST_PO -> CUST_PO_DATE -> IT_SO_ITEM -> ORDER_TYPE ...
-    # 注意: 文件確實將 Table (IT_SO_ITEM) 放在 Header 之前
+    # Structure strictly following Word doc: UUID -> CUST -> ITEM TABLE -> HEADER FIELDS
     xml_body = f'<urn:ZBAPI_SALESORDER_CREATE>{uuid_tag}<CUST_PO>{cust_po_val}</CUST_PO><CUST_PO_DATE>{cust_po_date_val}</CUST_PO_DATE><IT_SO_ITEM><item><MATERIAL_NO>000010</MATERIAL_NO><MATERIAL>{MATERIAL}</MATERIAL><UNIT>PCE</UNIT><QTY>{QTY}</QTY><PLANT>{plant_val}</PLANT><SHIPPING_POINT>{shipping_pt_val}</SHIPPING_POINT><DELIVERY_DATE>{cust_po_date_val}</DELIVERY_DATE></item></IT_SO_ITEM><ORDER_TYPE>{order_type_val}</ORDER_TYPE><SALES_CHANNEL>{sales_channel_val}</SALES_CHANNEL><SALES_DIVISION>{sales_division_val}</SALES_DIVISION><SALES_ORG>{sales_org_val}</SALES_ORG><SHIP_TO_PARTY>{ship_to_val}</SHIP_TO_PARTY><SOLD_TO_PARTY>{sold_to_val}</SOLD_TO_PARTY></urn:ZBAPI_SALESORDER_CREATE>'
 
     return SAPClient("SO").post_soap(xml_body)
 
-# --- [2] Create STO (PO) ---
 @mcp.tool()
 def create_sto_po(
     PR_NUMBER: str,
@@ -158,9 +150,8 @@ def create_sto_po(
     VENDOR: str = "ICC-CP60",
     DOC_TYPE: str = "NB"
 ) -> str:
-    """Step 2: Create STO PO (ZSD_STO_CREATE)"""
+    """Step 2: Create STO PO"""
 
-    # 防呆預設值
     pur_group_val = PUR_GROUP if PUR_GROUP else "999"
     pur_org_val = PUR_ORG if PUR_ORG else "TW10"
     pur_plant_val = PUR_PLANT if PUR_PLANT else "TP01"
@@ -169,12 +160,10 @@ def create_sto_po(
 
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
-    # [Source 66-78] 嚴格 XML 順序
     xml_body = f'<urn:ZSD_STO_CREATE>{uuid_tag}<DOC_TYPE>{doc_type_val}</DOC_TYPE><LGORT/><PR_NUMBER>{PR_NUMBER}</PR_NUMBER><PUR_GROUP>{pur_group_val}</PUR_GROUP><PUR_ITEM><item><BNFPO>{PR_ITEM}</BNFPO></item></PUR_ITEM><PUR_ORG>{pur_org_val}</PUR_ORG><PUR_PLANT>{pur_plant_val}</PUR_PLANT><VENDOR>{vendor_val}</VENDOR></urn:ZSD_STO_CREATE>'
 
     return SAPClient("STO").post_soap(xml_body)
 
-# --- [3] Create Outbound Delivery (DN) ---
 @mcp.tool()
 def create_outbound_delivery(
     PO_NUMBER: str,
@@ -188,12 +177,10 @@ def create_outbound_delivery(
     ship_point_val = SHIPPING_POINT if SHIPPING_POINT else "TW01"
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
-    # [Source 93] XML 順序
     xml_body = f'<urn:ZBAPI_OUTB_DELIVERY_CREATE_STO>{uuid_tag}<PO_ITEM><item><REF_DOC>{PO_NUMBER}</REF_DOC><REF_ITEM>{ITEM_NO}</REF_ITEM><DLV_QTY>{QUANTITY}</DLV_QTY><SALES_UNIT>EA</SALES_UNIT></item></PO_ITEM><SHIP_POINT>{ship_point_val}</SHIP_POINT></urn:ZBAPI_OUTB_DELIVERY_CREATE_STO>'
 
     return SAPClient("DN").post_soap(xml_body)
 
-# --- [4] Remediation: Info Record ---
 @mcp.tool()
 def maintain_info_record(
     MATERIAL: str,
@@ -216,7 +203,6 @@ def maintain_info_record(
 
     return SAPClient("INF").post_soap(xml_body)
 
-# --- [5] Remediation: Sales View ---
 @mcp.tool()
 def maintain_sales_view(
     MATERIAL: str,
@@ -228,7 +214,7 @@ def maintain_sales_view(
 ) -> str:
     """Remediation: Maintain Sales View"""
 
-    # 邏輯判斷
+    # Logic from Word Doc
     plant_val = PLANT
     delyg_plnt_val = DELYG_PLNT
 
@@ -239,7 +225,6 @@ def maintain_sales_view(
         plant_val = "TP01"
         delyg_plnt_val = "TP01"
 
-    # 防呆
     plant_val = plant_val if plant_val else "TP01"
     delyg_plnt_val = delyg_plnt_val if delyg_plnt_val else "TP01"
 
@@ -249,7 +234,6 @@ def maintain_sales_view(
 
     return SAPClient("MAT").post_soap(xml_body)
 
-# --- [6] Remediation: Warehouse View ---
 @mcp.tool()
 def maintain_warehouse_view(
     MATERIAL: str,
@@ -265,7 +249,6 @@ def maintain_warehouse_view(
 
     return SAPClient("MAT").post_soap(xml_body)
 
-# --- [7] Remediation: Source List ---
 @mcp.tool()
 def maintain_source_list(
     MATERIAL: str,
@@ -285,8 +268,5 @@ def maintain_source_list(
 
     return SAPClient("SRC").post_soap(xml_body)
 
-# ==============================================================================
-# 4. 啟動
-# ==============================================================================
 if __name__ == "__main__":
     mcp.run()
