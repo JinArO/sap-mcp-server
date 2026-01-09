@@ -43,6 +43,10 @@ class SAPConfig:
         "INF": {
             "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zws_info_record_maintain/100/zws_info_record_maintain_svr/zws_info_record_maintain_binding",
             "action": '"urn:sap-com:document:sap:rfc:functions:ZWS_INFO_RECORD_MAINTAIN:ZSD_INFO_RECORD_MAINTAINRequest"'
+        },
+        "QTY": {
+            "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zsd_kitting_flow_change/100/zsd_kitting_flow_change_svr/zsd_kitting_flow_change_bind",
+            "action": '"urn:sap-com:document:sap:rfc:functions:ZSD_KITTING_FLOW_CHANGE:ZSD_KITTING_FLOW_CHANGERequest"'
         }
     }
 
@@ -267,6 +271,21 @@ def maintain_source_list(
     xml_body = f'<urn:ZSD_SOURCE_LIST_MAINTAIN>{uuid_tag}<MATERIAL>{MATERIAL}</MATERIAL><PLANT>{plant_val}</PLANT><VENDOR>{vendor_val}</VENDOR><VALID_FROM>{valid_from_val}</VALID_FROM><VALID_TO>9999-12-31</VALID_TO></urn:ZSD_SOURCE_LIST_MAINTAIN>'
 
     return SAPClient("SRC").post_soap(xml_body)
+
+@mcp.tool()
+def change_kitting_qty(
+    KITTING_PO: str,
+    PO_ITEM: str,
+    QUANTITY: float,
+    UUID: str = ""
+) -> str:
+    """Remediation: Qty Change (Kitting PO)"""
+
+    uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
+
+    xml_body = f'<urn:ZSD_KITTING_FLOW_CHANGE>{uuid_tag}<KITTING_PO>{KITTING_PO}</KITTING_PO><PR_ITEM><item><EBELP>{PO_ITEM}</EBELP><MENGE>{QUANTITY}</MENGE></item></PR_ITEM></urn:ZSD_KITTING_FLOW_CHANGE>'
+
+    return SAPClient("QTY").post_soap(xml_body)
 
 if __name__ == "__main__":
     mcp.run()
