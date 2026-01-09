@@ -173,12 +173,11 @@ def create_outbound_delivery(
     PO_NUMBER: str,
     ITEM_NO: str,
     QUANTITY: float,
-    SHIPPING_POINT: str,
     UUID: str = ""
 ) -> str:
     """Step 3: Create Outbound Delivery"""
 
-    ship_point_val = SHIPPING_POINT if SHIPPING_POINT else "CN60"
+    ship_point_val = "CN60"
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
     xml_body = f'<urn:ZBAPI_OUTB_DELIVERY_CREATE_STO>{uuid_tag}<PO_ITEM><item><REF_DOC>{PO_NUMBER}</REF_DOC><REF_ITEM>{ITEM_NO}</REF_ITEM><DLV_QTY>{QUANTITY}</DLV_QTY><SALES_UNIT>EA</SALES_UNIT></item></PO_ITEM><SHIP_POINT>{ship_point_val}</SHIP_POINT></urn:ZBAPI_OUTB_DELIVERY_CREATE_STO>'
