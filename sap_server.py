@@ -12,7 +12,7 @@ import os
 import requests
 import xmltodict
 from typing import List, Optional
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Context
 from pydantic import Field
 
 # ==============================================================================
@@ -51,19 +51,71 @@ class SAPConfig:
     }
 
 # ==============================================================================
+# Session Management
+# ==============================================================================
+class SessionCredentialStore:
+    """存储不同 MCP session 的 SAP 凭据"""
+    def __init__(self):
+        # 使用字典存储：session_id -> {user, password}
+        self._credentials = {}
+
+        # 如果有环境变量，作为默认凭据
+        default_user = os.environ.get("SAP_USER")
+        default_password = os.environ.get("SAP_PASSWORD")
+        if default_user and default_password:
+            self._default_credentials = {
+                "user": default_user,
+                "password": default_password
+            }
+        else:
+            self._default_credentials = None
+
+    def set_credentials(self, session_id: str, user: str, password: str):
+        """为指定 session 设置凭据"""
+        self._credentials[session_id] = {
+            "user": user,
+            "password": password
+        }
+
+    def get_credentials(self, session_id: str):
+        """获取指定 session 的凭据"""
+        # 优先使用 session 特定的凭据
+        if session_id in self._credentials:
+            return self._credentials[session_id]
+
+        # 如果没有，尝试使用默认凭据
+        if self._default_credentials:
+            return self._default_credentials
+
+        raise ValueError(f"未找到 session {session_id} 的凭据，且未设置默认凭据。请先调用 set_sap_credentials 设置凭据。")
+
+    def has_credentials(self, session_id: str) -> bool:
+        """检查是否有凭据"""
+        return session_id in self._credentials or self._default_credentials is not None
+
+    def clear_credentials(self, session_id: str):
+        """清除指定 session 的凭据"""
+        if session_id in self._credentials:
+            del self._credentials[session_id]
+
+# 全局凭据存储
+credential_store = SessionCredentialStore()
+
+# ==============================================================================
 # Core Client
 # ==============================================================================
 mcp = FastMCP("SAP Automation Agent")
 
 class SAPClient:
-    def __init__(self, key: str):
+    def __init__(self, key: str, session_id: str):
         cfg = SAPConfig.SERVICES[key]
         self.url = cfg["url"]
         self.action = cfg["action"]
-        self.user = os.environ.get("SAP_USER")
-        self.password = os.environ.get("SAP_PASSWORD")
-        if not self.user or not self.password:
-            raise ValueError("Environment variables SAP_USER / SAP_PASSWORD not set.")
+
+        # 从凭据存储中获取此 session 的凭据
+        creds = credential_store.get_credentials(session_id)
+        self.user = creds["user"]
+        self.password = creds["password"]
 
     def post_soap(self, body_content: str) -> str:
         # Standard SOAP Envelope without XML declaration
@@ -102,7 +154,72 @@ class SAPClient:
             return f"Connection Error: {str(e)}"
 
 # ==============================================================================
-# Tools
+# Session Management Tools
+# ==============================================================================
+
+@mcp.tool()
+def set_sap_credentials(
+    username: str,
+    password: str,
+    ctx: Context = None
+) -> str:
+    """设置当前会话的 SAP 凭据
+
+    参数:
+        username: SAP 用户名
+        password: SAP 密码
+
+    返回:
+        设置结果消息
+    """
+    if ctx and hasattr(ctx, 'request_context'):
+        # 使用 request_id 作为 session 标识
+        session_id = getattr(ctx.request_context, 'request_id', 'default')
+        # 更好的做法是使用 session 信息，但这里用 client_params 模拟
+        if hasattr(ctx, 'session') and hasattr(ctx.session, 'client_params'):
+            client_info = str(ctx.session.client_params)
+            session_id = hash(client_info) if client_info else 'default'
+        session_id = str(session_id)
+    else:
+        session_id = 'default'
+
+    credential_store.set_credentials(session_id, username, password)
+    return f"已为会话 {session_id} 设置 SAP 凭据（用户：{username}）"
+
+@mcp.tool()
+def check_session_credentials(ctx: Context = None) -> str:
+    """检查当前会话是否已设置凭据
+
+    返回:
+        凭据状态信息
+    """
+    if ctx and hasattr(ctx, 'request_context'):
+        session_id = getattr(ctx.request_context, 'request_id', 'default')
+        if hasattr(ctx, 'session') and hasattr(ctx.session, 'client_params'):
+            client_info = str(ctx.session.client_params)
+            session_id = hash(client_info) if client_info else 'default'
+        session_id = str(session_id)
+    else:
+        session_id = 'default'
+
+    if credential_store.has_credentials(session_id):
+        creds = credential_store.get_credentials(session_id)
+        return f"会话 {session_id} 已设置凭据（用户：{creds['user']}）"
+    else:
+        return f"会话 {session_id} 未设置凭据"
+
+def _get_session_id(ctx: Context = None) -> str:
+    """从 Context 中提取 session ID"""
+    if ctx and hasattr(ctx, 'request_context'):
+        session_id = getattr(ctx.request_context, 'request_id', 'default')
+        if hasattr(ctx, 'session') and hasattr(ctx.session, 'client_params'):
+            client_info = str(ctx.session.client_params)
+            session_id = hash(client_info) if client_info else 'default'
+        return str(session_id)
+    return 'default'
+
+# ==============================================================================
+# SAP Operation Tools
 # ==============================================================================
 
 @mcp.tool()
@@ -119,9 +236,13 @@ def create_sales_order(
     SOLD_TO_PARTY: str = "HRCTO-IMX",
     SHIP_TO_PARTY: str = "HRCTO-MX",
     PLANT: str = "TP01",
-    SHIPPING_POINT: str = "TW01"
+    SHIPPING_POINT: str = "TW01",
+    ctx: Context = None
 ) -> str:
-    """Step 1: Create Sales Order"""
+    """步骤 1: 创建销售订单"""
+
+    # 获取当前会话的 session ID
+    session_id = _get_session_id(ctx)
 
     # Enforce defaults to prevent 'Mandatory header fields missing'
     order_type_val = ORDER_TYPE if ORDER_TYPE else "ZIES"
@@ -141,7 +262,7 @@ def create_sales_order(
     # Structure strictly following Word doc: UUID -> CUST -> ITEM TABLE -> HEADER FIELDS
     xml_body = f'<urn:ZBAPI_SALESORDER_CREATE>{uuid_tag}<CUST_PO>{cust_po_val}</CUST_PO><CUST_PO_DATE>{cust_po_date_val}</CUST_PO_DATE><IT_SO_ITEM><item><MATERIAL_NO>000010</MATERIAL_NO><MATERIAL>{MATERIAL}</MATERIAL><UNIT>PCE</UNIT><QTY>{QTY}</QTY><PLANT>{plant_val}</PLANT><SHIPPING_POINT>{shipping_pt_val}</SHIPPING_POINT><DELIVERY_DATE>{cust_po_date_val}</DELIVERY_DATE></item></IT_SO_ITEM><ORDER_TYPE>{order_type_val}</ORDER_TYPE><SALES_CHANNEL>{sales_channel_val}</SALES_CHANNEL><SALES_DIVISION>{sales_division_val}</SALES_DIVISION><SALES_ORG>{sales_org_val}</SALES_ORG><SHIP_TO_PARTY>{ship_to_val}</SHIP_TO_PARTY><SOLD_TO_PARTY>{sold_to_val}</SOLD_TO_PARTY></urn:ZBAPI_SALESORDER_CREATE>'
 
-    return SAPClient("SO").post_soap(xml_body)
+    return SAPClient("SO", session_id).post_soap(xml_body)
 
 @mcp.tool()
 def create_sto_po(
@@ -152,9 +273,12 @@ def create_sto_po(
     PUR_ORG: str = "TW10",
     PUR_PLANT: str = "TP01",
     VENDOR: str = "ICC-CP60",
-    DOC_TYPE: str = "NB"
+    DOC_TYPE: str = "NB",
+    ctx: Context = None
 ) -> str:
-    """Step 2: Create STO PO"""
+    """步骤 2: 创建 STO PO"""
+
+    session_id = _get_session_id(ctx)
 
     pur_group_val = PUR_GROUP if PUR_GROUP else "999"
     pur_org_val = PUR_ORG if PUR_ORG else "TW10"
@@ -166,23 +290,26 @@ def create_sto_po(
 
     xml_body = f'<urn:ZSD_STO_CREATE>{uuid_tag}<DOC_TYPE>{doc_type_val}</DOC_TYPE><LGORT/><PR_NUMBER>{PR_NUMBER}</PR_NUMBER><PUR_GROUP>{pur_group_val}</PUR_GROUP><PUR_ITEM><item><BNFPO>{PR_ITEM}</BNFPO></item></PUR_ITEM><PUR_ORG>{pur_org_val}</PUR_ORG><PUR_PLANT>{pur_plant_val}</PUR_PLANT><VENDOR>{vendor_val}</VENDOR></urn:ZSD_STO_CREATE>'
 
-    return SAPClient("STO").post_soap(xml_body)
+    return SAPClient("STO", session_id).post_soap(xml_body)
 
 @mcp.tool()
 def create_outbound_delivery(
     PO_NUMBER: str,
     ITEM_NO: str,
     QUANTITY: float,
-    UUID: str = ""
+    UUID: str = "",
+    ctx: Context = None
 ) -> str:
-    """Step 3: Create Outbound Delivery"""
+    """步骤 3: 创建出库交货单"""
+
+    session_id = _get_session_id(ctx)
 
     ship_point_val = "CN60"
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
     xml_body = f'<urn:ZBAPI_OUTB_DELIVERY_CREATE_STO>{uuid_tag}<PO_ITEM><item><REF_DOC>{PO_NUMBER}</REF_DOC><REF_ITEM>{ITEM_NO}</REF_ITEM><DLV_QTY>{QUANTITY}</DLV_QTY><SALES_UNIT>EA</SALES_UNIT></item></PO_ITEM><SHIP_POINT>{ship_point_val}</SHIP_POINT></urn:ZBAPI_OUTB_DELIVERY_CREATE_STO>'
 
-    return SAPClient("DN").post_soap(xml_body)
+    return SAPClient("DN", session_id).post_soap(xml_body)
 
 @mcp.tool()
 def maintain_info_record(
@@ -191,9 +318,12 @@ def maintain_info_record(
     PRICE: str = "999",
     VENDOR: str = "ICC-CP60",
     PLANT: str = "TP01",
-    PUR_ORG: str = "TW10"
+    PUR_ORG: str = "TW10",
+    ctx: Context = None
 ) -> str:
-    """Remediation: Info Record"""
+    """补救操作: 维护信息记录"""
+
+    session_id = _get_session_id(ctx)
 
     price_val = PRICE if PRICE else "999"
     vendor_val = VENDOR if VENDOR else "ICC-CP60"
@@ -204,7 +334,7 @@ def maintain_info_record(
 
     xml_body = f'<urn:ZSD_INFO_RECORD_MAINTAIN>{uuid_tag}<CURRENCY>USD</CURRENCY><MATERIAL>{MATERIAL}</MATERIAL><PLANT>{plant_val}</PLANT><PRICE>{price_val}</PRICE><PRICE_UNIT>1</PRICE_UNIT><PUR_ORG>{pur_org_val}</PUR_ORG><VENDOR>{vendor_val}</VENDOR></urn:ZSD_INFO_RECORD_MAINTAIN>'
 
-    return SAPClient("INF").post_soap(xml_body)
+    return SAPClient("INF", session_id).post_soap(xml_body)
 
 @mcp.tool()
 def maintain_sales_view(
@@ -213,9 +343,12 @@ def maintain_sales_view(
     DISTR_CHAN: str,
     UUID: str = "",
     PLANT: str = "TP01",
-    DELYG_PLNT: str = "TP01"
+    DELYG_PLNT: str = "TP01",
+    ctx: Context = None
 ) -> str:
-    """Remediation: Maintain Sales View"""
+    """补救操作: 维护销售视图"""
+
+    session_id = _get_session_id(ctx)
 
     # Logic from Word Doc
     plant_val = PLANT
@@ -235,22 +368,25 @@ def maintain_sales_view(
 
     xml_body = f'<urn:ZBAPI_MATERIAL_SAVEDATA>{uuid_tag}<HEADDATA><MATERIAL>{MATERIAL}</MATERIAL><SALES_VIEW>X</SALES_VIEW><STORAGE_VIEW></STORAGE_VIEW><WAREHOUSE_VIEW></WAREHOUSE_VIEW></HEADDATA><PLANTDATA><PLANT>{plant_val}</PLANT></PLANTDATA><SALESDATA><SALES_ORG>{SALES_ORG}</SALES_ORG><DISTR_CHAN>{DISTR_CHAN}</DISTR_CHAN><DELYG_PLNT>{delyg_plnt_val}</DELYG_PLNT></SALESDATA></urn:ZBAPI_MATERIAL_SAVEDATA>'
 
-    return SAPClient("MAT").post_soap(xml_body)
+    return SAPClient("MAT", session_id).post_soap(xml_body)
 
 @mcp.tool()
 def maintain_warehouse_view(
     MATERIAL: str,
     UUID: str = "",
-    WHSE_NO: str = "WH1"
+    WHSE_NO: str = "WH1",
+    ctx: Context = None
 ) -> str:
-    """Remediation: Maintain Warehouse View"""
+    """补救操作: 维护仓库视图"""
+
+    session_id = _get_session_id(ctx)
 
     whse_no_val = WHSE_NO if WHSE_NO else "WH1"
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
     xml_body = f'<urn:ZBAPI_MATERIAL_SAVEDATA>{uuid_tag}<HEADDATA><MATERIAL>{MATERIAL}</MATERIAL><SALES_VIEW></SALES_VIEW><STORAGE_VIEW></STORAGE_VIEW><WAREHOUSE_VIEW>X</WAREHOUSE_VIEW></HEADDATA><WAREHOUSENUMBERDATA><WHSE_NO>{whse_no_val}</WHSE_NO></WAREHOUSENUMBERDATA></urn:ZBAPI_MATERIAL_SAVEDATA>'
 
-    return SAPClient("MAT").post_soap(xml_body)
+    return SAPClient("MAT", session_id).post_soap(xml_body)
 
 @mcp.tool()
 def maintain_source_list(
@@ -258,9 +394,12 @@ def maintain_source_list(
     VALID_FROM: str,
     UUID: str = "",
     PLANT: str = "TP01",
-    VENDOR: str = "ICC-CP60"
+    VENDOR: str = "ICC-CP60",
+    ctx: Context = None
 ) -> str:
-    """Remediation: Source List"""
+    """补救操作: 维护源清单"""
+
+    session_id = _get_session_id(ctx)
 
     plant_val = PLANT if PLANT else "TP01"
     vendor_val = VENDOR if VENDOR else "ICC-CP60"
@@ -269,22 +408,25 @@ def maintain_source_list(
 
     xml_body = f'<urn:ZSD_SOURCE_LIST_MAINTAIN>{uuid_tag}<MATERIAL>{MATERIAL}</MATERIAL><PLANT>{plant_val}</PLANT><VENDOR>{vendor_val}</VENDOR><VALID_FROM>{valid_from_val}</VALID_FROM><VALID_TO>9999-12-31</VALID_TO></urn:ZSD_SOURCE_LIST_MAINTAIN>'
 
-    return SAPClient("SRC").post_soap(xml_body)
+    return SAPClient("SRC", session_id).post_soap(xml_body)
 
 @mcp.tool()
 def change_kitting_qty(
     KITTING_PO: str,
     PO_ITEM: str,
     QUANTITY: float,
-    UUID: str = ""
+    UUID: str = "",
+    ctx: Context = None
 ) -> str:
-    """Remediation: Qty Change (Kitting PO)"""
+    """补救操作: 更改 Kitting PO 数量"""
+
+    session_id = _get_session_id(ctx)
 
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
     xml_body = f'<urn:ZSD_KITTING_FLOW_CHANGE>{uuid_tag}<KITTING_PO>{KITTING_PO}</KITTING_PO><PR_ITEM><item><EBELP>{PO_ITEM}</EBELP><MENGE>{QUANTITY}</MENGE></item></PR_ITEM></urn:ZSD_KITTING_FLOW_CHANGE>'
 
-    return SAPClient("QTY").post_soap(xml_body)
+    return SAPClient("QTY", session_id).post_soap(xml_body)
 
 if __name__ == "__main__":
     mcp.run()
