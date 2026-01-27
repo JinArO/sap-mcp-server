@@ -16,7 +16,7 @@ from mcp.server.fastmcp import FastMCP, Context
 from pydantic import Field
 
 # ==============================================================================
-# Configuration
+# 設定 (Configuration)
 # ==============================================================================
 class SAPConfig:
     SERVICES = {
@@ -51,15 +51,15 @@ class SAPConfig:
     }
 
 # ==============================================================================
-# Session Management
+# 工作階段管理 (Session Management)
 # ==============================================================================
 class SessionCredentialStore:
-    """存储不同 MCP session 的 SAP 凭据"""
+    """儲存不同 MCP 工作階段 (Session) 的 SAP 憑證"""
     def __init__(self):
-        # 使用字典存储：session_id -> {user, password}
+        # 使用字典儲存：session_id -> {user, password}
         self._credentials = {}
 
-        # 如果有环境变量，作为默认凭据
+        # 如果有環境變數，將其作為預設憑證
         default_user = os.environ.get("SAP_USER")
         default_password = os.environ.get("SAP_PASSWORD")
         if default_user and default_password:
@@ -71,38 +71,38 @@ class SessionCredentialStore:
             self._default_credentials = None
 
     def set_credentials(self, session_id: str, user: str, password: str):
-        """为指定 session 设置凭据"""
+        """為指定工作階段設定憑證"""
         self._credentials[session_id] = {
             "user": user,
             "password": password
         }
 
     def get_credentials(self, session_id: str):
-        """获取指定 session 的凭据"""
-        # 优先使用 session 特定的凭据
+        """獲取指定工作階段的憑證"""
+        # 優先使用該工作階段特定的憑證
         if session_id in self._credentials:
             return self._credentials[session_id]
 
-        # 如果没有，尝试使用默认凭据
+        # 如果沒有，嘗試使用預設憑證
         if self._default_credentials:
             return self._default_credentials
 
-        raise ValueError(f"未找到 session {session_id} 的凭据，且未设置默认凭据。请先调用 set_sap_credentials 设置凭据。")
+        raise ValueError(f"未找到工作階段 {session_id} 的憑證，且未設定預設憑證。請先呼叫 set_sap_credentials 設定憑證。")
 
     def has_credentials(self, session_id: str) -> bool:
-        """检查是否有凭据"""
+        """檢查是否有憑證"""
         return session_id in self._credentials or self._default_credentials is not None
 
     def clear_credentials(self, session_id: str):
-        """清除指定 session 的凭据"""
+        """清除指定工作階段的憑證"""
         if session_id in self._credentials:
             del self._credentials[session_id]
 
-# 全局凭据存储
+# 全域憑證儲存區
 credential_store = SessionCredentialStore()
 
 # ==============================================================================
-# Core Client
+# 核心客戶端 (Core Client)
 # ==============================================================================
 mcp = FastMCP("SAP Automation Agent")
 
@@ -112,13 +112,13 @@ class SAPClient:
         self.url = cfg["url"]
         self.action = cfg["action"]
 
-        # 从凭据存储中获取此 session 的凭据
+        # 從憑證儲存區中獲取此工作階段的憑證
         creds = credential_store.get_credentials(session_id)
         self.user = creds["user"]
         self.password = creds["password"]
 
     def post_soap(self, body_content: str) -> str:
-        # Standard SOAP Envelope without XML declaration
+        # 標準 SOAP Envelope (不含 XML 宣告)
         envelope = f'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:sap-com:document:sap:rfc:functions"><soapenv:Header/><soapenv:Body>{body_content}</soapenv:Body></soapenv:Envelope>'
 
         headers = {
@@ -139,7 +139,7 @@ class SAPClient:
             if response.status_code == 200:
                 try:
                     parsed = xmltodict.parse(response.text)
-                    # Try to extract Body content
+                    # 嘗試提取 Body 內容
                     env = parsed.get('soap-env:Envelope') or parsed.get('soapenv:Envelope') or parsed.get('SOAP-ENV:Envelope')
                     if env:
                         body = env.get('soap-env:Body') or env.get('soapenv:Body') or env.get('SOAP-ENV:Body')
@@ -148,13 +148,13 @@ class SAPClient:
                 except:
                     return response.text
             else:
-                return f"HTTP Error {response.status_code}: {response.text}"
+                return f"HTTP 錯誤 {response.status_code}: {response.text}"
 
         except Exception as e:
-            return f"Connection Error: {str(e)}"
+            return f"連線錯誤: {str(e)}"
 
 # ==============================================================================
-# Session Management Tools
+# 工作階段管理工具 (Session Management Tools)
 # ==============================================================================
 
 @mcp.tool()
@@ -163,19 +163,19 @@ def set_sap_credentials(
     password: str,
     ctx: Context = None
 ) -> str:
-    """设置当前会话的 SAP 凭据
+    """設定目前工作階段的 SAP 憑證
 
-    参数:
-        username: SAP 用户名
-        password: SAP 密码
+    參數:
+        username: SAP 使用者名稱
+        password: SAP 密碼
 
-    返回:
-        设置结果消息
+    回傳:
+        設定結果訊息
     """
     if ctx and hasattr(ctx, 'request_context'):
-        # 使用 request_id 作为 session 标识
+        # 使用 request_id 作為 session 識別
         session_id = getattr(ctx.request_context, 'request_id', 'default')
-        # 更好的做法是使用 session 信息，但这里用 client_params 模拟
+        # 更好的做法是使用 session 資訊，但這裡用 client_params 模擬
         if hasattr(ctx, 'session') and hasattr(ctx.session, 'client_params'):
             client_info = str(ctx.session.client_params)
             session_id = hash(client_info) if client_info else 'default'
@@ -184,14 +184,14 @@ def set_sap_credentials(
         session_id = 'default'
 
     credential_store.set_credentials(session_id, username, password)
-    return f"已为会话 {session_id} 设置 SAP 凭据（用户：{username}）"
+    return f"已為工作階段 {session_id} 設定 SAP 憑證（使用者：{username}）"
 
 @mcp.tool()
 def check_session_credentials(ctx: Context = None) -> str:
-    """检查当前会话是否已设置凭据
+    """檢查目前工作階段是否已設定憑證
 
-    返回:
-        凭据状态信息
+    回傳:
+        憑證狀態資訊
     """
     if ctx and hasattr(ctx, 'request_context'):
         session_id = getattr(ctx.request_context, 'request_id', 'default')
@@ -204,12 +204,12 @@ def check_session_credentials(ctx: Context = None) -> str:
 
     if credential_store.has_credentials(session_id):
         creds = credential_store.get_credentials(session_id)
-        return f"会话 {session_id} 已设置凭据（用户：{creds['user']}）"
+        return f"工作階段 {session_id} 已設定憑證（使用者：{creds['user']}）"
     else:
-        return f"会话 {session_id} 未设置凭据"
+        return f"工作階段 {session_id} 未設定憑證"
 
 def _get_session_id(ctx: Context = None) -> str:
-    """从 Context 中提取 session ID"""
+    """從 Context 中提取 session ID"""
     if ctx and hasattr(ctx, 'request_context'):
         session_id = getattr(ctx.request_context, 'request_id', 'default')
         if hasattr(ctx, 'session') and hasattr(ctx.session, 'client_params'):
@@ -219,7 +219,7 @@ def _get_session_id(ctx: Context = None) -> str:
     return 'default'
 
 # ==============================================================================
-# SAP Operation Tools
+# SAP 操作工具 (SAP Operation Tools)
 # ==============================================================================
 
 @mcp.tool()
@@ -239,12 +239,12 @@ def create_sales_order(
     SHIPPING_POINT: str = "TW01",
     ctx: Context = None
 ) -> str:
-    """步骤 1: 创建销售订单"""
+    """步驟 1: 建立銷售訂單 (Sales Order)"""
 
-    # 获取当前会话的 session ID
+    # 獲取目前工作階段的 session ID
     session_id = _get_session_id(ctx)
 
-    # Enforce defaults to prevent 'Mandatory header fields missing'
+    # 強制使用預設值以防止「缺少必要的抬頭欄位」錯誤
     order_type_val = ORDER_TYPE if ORDER_TYPE else "ZIES"
     sales_org_val = SALES_ORG if SALES_ORG else "TW01"
     sales_channel_val = SALES_CHANNEL if SALES_CHANNEL else "03"
@@ -259,7 +259,7 @@ def create_sales_order(
 
     uuid_tag = f"<UUID>{UUID}</UUID>" if UUID else ""
 
-    # Structure strictly following Word doc: UUID -> CUST -> ITEM TABLE -> HEADER FIELDS
+    # 嚴格遵循文件結構：UUID -> CUST -> ITEM TABLE -> HEADER FIELDS
     xml_body = f'<urn:ZBAPI_SALESORDER_CREATE>{uuid_tag}<CUST_PO>{cust_po_val}</CUST_PO><CUST_PO_DATE>{cust_po_date_val}</CUST_PO_DATE><IT_SO_ITEM><item><MATERIAL_NO>000010</MATERIAL_NO><MATERIAL>{MATERIAL}</MATERIAL><UNIT>PCE</UNIT><QTY>{QTY}</QTY><PLANT>{plant_val}</PLANT><SHIPPING_POINT>{shipping_pt_val}</SHIPPING_POINT><DELIVERY_DATE>{cust_po_date_val}</DELIVERY_DATE></item></IT_SO_ITEM><ORDER_TYPE>{order_type_val}</ORDER_TYPE><SALES_CHANNEL>{sales_channel_val}</SALES_CHANNEL><SALES_DIVISION>{sales_division_val}</SALES_DIVISION><SALES_ORG>{sales_org_val}</SALES_ORG><SHIP_TO_PARTY>{ship_to_val}</SHIP_TO_PARTY><SOLD_TO_PARTY>{sold_to_val}</SOLD_TO_PARTY></urn:ZBAPI_SALESORDER_CREATE>'
 
     return SAPClient("SO", session_id).post_soap(xml_body)
@@ -276,7 +276,7 @@ def create_sto_po(
     DOC_TYPE: str = "NB",
     ctx: Context = None
 ) -> str:
-    """步骤 2: 创建 STO PO"""
+    """步驟 2: 建立 STO 採購訂單 (PO)"""
 
     session_id = _get_session_id(ctx)
 
@@ -300,7 +300,7 @@ def create_outbound_delivery(
     UUID: str = "",
     ctx: Context = None
 ) -> str:
-    """步骤 3: 创建出库交货单"""
+    """步驟 3: 建立外向交貨單 (Outbound Delivery)"""
 
     session_id = _get_session_id(ctx)
 
@@ -321,7 +321,7 @@ def maintain_info_record(
     PUR_ORG: str = "TW10",
     ctx: Context = None
 ) -> str:
-    """补救操作: 维护信息记录"""
+    """補救操作: 維護資訊記錄 (Info Record)"""
 
     session_id = _get_session_id(ctx)
 
@@ -346,11 +346,11 @@ def maintain_sales_view(
     DELYG_PLNT: str = "TP01",
     ctx: Context = None
 ) -> str:
-    """补救操作: 维护销售视图"""
+    """補救操作: 維護銷售視圖 (Sales View)"""
 
     session_id = _get_session_id(ctx)
 
-    # Logic from Word Doc
+    # 邏輯參照 Word 文件
     plant_val = PLANT
     delyg_plnt_val = DELYG_PLNT
 
@@ -377,7 +377,7 @@ def maintain_warehouse_view(
     WHSE_NO: str = "WH1",
     ctx: Context = None
 ) -> str:
-    """补救操作: 维护仓库视图"""
+    """補救操作: 維護倉庫視圖 (Warehouse View)"""
 
     session_id = _get_session_id(ctx)
 
@@ -397,7 +397,7 @@ def maintain_source_list(
     VENDOR: str = "ICC-CP60",
     ctx: Context = None
 ) -> str:
-    """补救操作: 维护源清单"""
+    """補救操作: 維護貨源清單 (Source List)"""
 
     session_id = _get_session_id(ctx)
 
@@ -418,7 +418,7 @@ def change_kitting_qty(
     UUID: str = "",
     ctx: Context = None
 ) -> str:
-    """补救操作: 更改 Kitting PO 数量"""
+    """補救操作: 更改 Kitting PO 數量"""
 
     session_id = _get_session_id(ctx)
 
