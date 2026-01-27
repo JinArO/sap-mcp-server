@@ -47,6 +47,10 @@ class SAPConfig:
         "QTY": {
             "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zsd_kitting_flow_change/100/zsd_kitting_flow_change_svr/zsd_kitting_flow_change_bind",
             "action": '"urn:sap-com:document:sap:rfc:functions:ZSD_KITTING_FLOW_CHANGE:ZSD_KITTING_FLOW_CHANGERequest"'
+        },
+        "STATUS": {
+            "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zai_flow_status/100/zai_flow_status_svr/zai_flow_status_svr_bind",
+            "action": '"urn:sap-com:document:sap:rfc:functions:ZAI_FLOW_STATUS:ZAI_FLOW_STATUSRequest"'
         }
     }
 
@@ -427,6 +431,19 @@ def change_kitting_qty(
     xml_body = f'<urn:ZSD_KITTING_FLOW_CHANGE>{uuid_tag}<KITTING_PO>{KITTING_PO}</KITTING_PO><PR_ITEM><item><EBELP>{PO_ITEM}</EBELP><MENGE>{QUANTITY}</MENGE></item></PR_ITEM></urn:ZSD_KITTING_FLOW_CHANGE>'
 
     return SAPClient("QTY", session_id).post_soap(xml_body)
+
+@mcp.tool()
+def check_kitting_status(
+    BATCH_ID: str,
+    ctx: Context = None
+) -> str:
+    """查詢 Kitting 流程狀態"""
+    
+    session_id = _get_session_id(ctx)
+
+    xml_body = f'<urn:ZAI_FLOW_STATUS><BATCH_ID><item><BATCH_ID>{BATCH_ID}</BATCH_ID></item></BATCH_ID></urn:ZAI_FLOW_STATUS>'
+    
+    return SAPClient("STATUS", session_id).post_soap(xml_body)
 
 if __name__ == "__main__":
     mcp.run()
