@@ -49,7 +49,7 @@ class SAPConfig:
             "action": '"urn:sap-com:document:sap:rfc:functions:ZSD_KITTING_FLOW_CHANGE:ZSD_KITTING_FLOW_CHANGERequest"'
         },
         "STATUS": {
-            "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/rfc/sap/zai_flow_status/100/zai_flow_status_svr/zai_flow_status_svr_bind",
+            "url": "https://vhivcqasci.sap.inventec.com:44300/sap/bc/srt/wsdl/flv_10002A111AD1/bndg_url/sap/bc/srt/rfc/sap/zai_flow_status/100/zai_flow_status_svr/zai_flow_status_svr_bind?sap-client=100",
             "action": '"urn:sap-com:document:sap:rfc:functions:ZAI_FLOW_STATUS:ZAI_FLOW_STATUSRequest"'
         }
     }
@@ -441,7 +441,10 @@ def check_kitting_status(
     
     session_id = _get_session_id(ctx)
 
-    xml_body = f'<urn:ZAI_FLOW_STATUS><BATCH_ID><item><BATCH_ID>{BATCH_ID}</BATCH_ID></item></BATCH_ID></urn:ZAI_FLOW_STATUS>'
+    # Ensure BATCH_ID is 16 chars, zero-padded to match SAP format
+    batch_id_val = BATCH_ID.strip().zfill(16)
+
+    xml_body = f'<urn:ZAI_FLOW_STATUS><BATCH_ID><item><BATCH_ID>{batch_id_val}</BATCH_ID></item></BATCH_ID></urn:ZAI_FLOW_STATUS>'
     
     return SAPClient("STATUS", session_id).post_soap(xml_body)
 
