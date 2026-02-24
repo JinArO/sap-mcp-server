@@ -438,7 +438,7 @@ def check_kitting_status(
     BATCH_ID: str,
     ctx: Context = None
 ) -> str:
-    """查詢 Kitting 流程狀態"""
+    """查詢 Kitting 流程狀態 (v2 - 結構化輸出)"""
     
     session_id = _get_session_id(ctx)
 
