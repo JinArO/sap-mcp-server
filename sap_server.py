@@ -158,6 +158,45 @@ class SAPClient:
         except Exception as e:
             return f"連線錯誤: {str(e)}"
 
+    def post_soap_dict(self, body_content: str):
+        """與 post_soap 相同，但回傳 (dict_body, error_string)
+           成功時: (dict, None)
+           失敗時: (None, error_string)
+        """
+        envelope = f'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:sap-com:document:sap:rfc:functions"><soapenv:Header/><soapenv:Body>{body_content}</soapenv:Body></soapenv:Envelope>'
+
+        headers = {
+            'Content-Type': 'text/xml; charset=utf-8',
+            'Accept': 'text/xml',
+            'SOAPAction': self.action,
+        }
+
+        try:
+            response = requests.post(
+                self.url,
+                data=envelope.encode('utf-8'),
+                auth=(self.user, self.password),
+                headers=headers,
+                verify=False
+            )
+
+            if response.status_code == 200:
+                try:
+                    parsed = xmltodict.parse(response.text)
+                    env = parsed.get('soap-env:Envelope') or parsed.get('soapenv:Envelope') or parsed.get('SOAP-ENV:Envelope')
+                    if env:
+                        body = env.get('soap-env:Body') or env.get('soapenv:Body') or env.get('SOAP-ENV:Body')
+                        if body and isinstance(body, dict):
+                            return (body, None)
+                    return (None, response.text)
+                except:
+                    return (None, response.text)
+            else:
+                return (None, f"HTTP 錯誤 {response.status_code}: {response.text}")
+
+        except Exception as e:
+            return (None, f"連線錯誤: {str(e)}")
+
 # ==============================================================================
 # 工作階段管理工具 (Session Management Tools)
 # ==============================================================================
@@ -448,74 +487,70 @@ def check_kitting_status(
     # BATCH_ID is a single value (Structure/Element), not a Table
     xml_body = f'<urn:ZAI_FLOW_STATUS><BATCH_ID>{batch_id_val}</BATCH_ID></urn:ZAI_FLOW_STATUS>'
     
-    raw = SAPClient("STATUS", session_id).post_soap(xml_body)
+    client = SAPClient("STATUS", session_id)
+    body_dict, error = client.post_soap_dict(xml_body)
 
     # ── Format error responses ──
-    if isinstance(raw, str):
-        if raw.startswith("連線錯誤:") or raw.startswith("Connection Error:"):
+    if error:
+        if error.startswith("連線錯誤:") or error.startswith("Connection Error:"):
             return (
                 f"[ERROR] 連線失敗\n"
                 f"TYPE:          連線錯誤 (Connection Error)\n"
                 f"BATCH_ID:      {batch_id_val}\n"
-                f"DETAIL:        {raw.split(':', 1)[1].strip()}"
+                f"DETAIL:        {error.split(':', 1)[1].strip()}"
             )
-        if raw.startswith("HTTP 錯誤") or raw.startswith("HTTP Error"):
-            # Try to extract SOAP fault message
-            fault_msg = raw
-            try:
-                fault_parsed = xmltodict.parse(raw.split(":", 1)[1].strip())
-                fault = recursive_find('faultstring', fault_parsed)
-                if fault:
-                    fault_msg = fault
-            except:
-                pass
-            return (
-                f"[ERROR] HTTP 錯誤\n"
-                f"TYPE:          HTTP Error\n"
-                f"BATCH_ID:      {batch_id_val}\n"
-                f"DETAIL:        {fault_msg}"
-            )
+        # HTTP or other error
+        fault_msg = error
+        try:
+            fault_parsed = xmltodict.parse(error.split(":", 1)[1].strip())
+            fault = recursive_find('faultstring', fault_parsed)
+            if fault:
+                fault_msg = fault
+        except:
+            pass
+        return (
+            f"[ERROR] HTTP 錯誤\n"
+            f"TYPE:          HTTP Error\n"
+            f"BATCH_ID:      {batch_id_val}\n"
+            f"DETAIL:        {fault_msg}"
+        )
 
     # ── Format success responses ──
-    try:
-        parsed = eval(raw) if isinstance(raw, str) and raw.startswith('{') else raw
-        if isinstance(parsed, dict):
-            resp = recursive_find('RETURN_DATA', parsed)
-            if resp and isinstance(resp, dict):
-                lines = []
-                lines.append(f"BATCH_ID:      {resp.get('BATCH_ID', 'N/A')}")
-                lines.append(f"PO:            {resp.get('PO', 'N/A')}")
-                lines.append(f"STATUS:        {resp.get('STATUS', 'N/A')}")
-                lines.append(f"TRIGGER_DATE:  {resp.get('TRIGGER_DATE', 'N/A')}")
-                lines.append(f"TRIGGER_TIME:  {resp.get('TRIGGER_TIME', 'N/A')}")
-                lines.append(f"SO_SUCCESS:    {resp.get('SO_SUCCESS') or '-'}")
-                lines.append(f"STO_SUCCESS:   {resp.get('STO_SUCCESS') or '-'}")
-                lines.append(f"DN_SUCCESS:    {resp.get('DN_SUCCESS') or '-'}")
-                lines.append(f"LAST_ACTION:   {resp.get('LAST_ACTION') or '-'}")
+    if body_dict and isinstance(body_dict, dict):
+        resp = recursive_find('RETURN_DATA', body_dict)
+        if resp and isinstance(resp, dict):
+            lines = []
+            lines.append(f"BATCH_ID:      {resp.get('BATCH_ID', 'N/A')}")
+            lines.append(f"PO:            {resp.get('PO', 'N/A')}")
+            lines.append(f"STATUS:        {resp.get('STATUS', 'N/A')}")
+            lines.append(f"TRIGGER_DATE:  {resp.get('TRIGGER_DATE', 'N/A')}")
+            lines.append(f"TRIGGER_TIME:  {resp.get('TRIGGER_TIME', 'N/A')}")
+            lines.append(f"SO_SUCCESS:    {resp.get('SO_SUCCESS') or '-'}")
+            lines.append(f"STO_SUCCESS:   {resp.get('STO_SUCCESS') or '-'}")
+            lines.append(f"DN_SUCCESS:    {resp.get('DN_SUCCESS') or '-'}")
+            lines.append(f"LAST_ACTION:   {resp.get('LAST_ACTION') or '-'}")
 
-                # Parse LAST_IMPORT JSON string if exists
-                last_import = resp.get('LAST_IMPORT')
-                if last_import:
-                    try:
-                        import_data = json.loads(last_import) if isinstance(last_import, str) else last_import
-                        lines.append(f"LAST_IMPORT:")
-                        lines.append(f"  UUID:        {import_data.get('UUID', 'N/A')}")
-                        lines.append(f"  PO_NUMBER:   {import_data.get('PO_NUMBER', 'N/A')}")
-                        lines.append(f"  TALK:        {import_data.get('TALK', 'N/A')}")
-                        items = import_data.get('ITEM_DATA', [])
-                        for i, item in enumerate(items):
-                            lines.append(f"  ITEM[{i}]:     {item.get('MATERIAL_NO', '')} x {item.get('QUANTITY', '')} {item.get('UOM', '')}")
-                    except:
-                        lines.append(f"LAST_IMPORT:   {last_import}")
-                else:
-                    lines.append(f"LAST_IMPORT:   -")
+            # Parse LAST_IMPORT JSON string if exists
+            last_import = resp.get('LAST_IMPORT')
+            if last_import:
+                try:
+                    import_data = json.loads(last_import) if isinstance(last_import, str) else last_import
+                    lines.append(f"LAST_IMPORT:")
+                    lines.append(f"  UUID:        {import_data.get('UUID', 'N/A')}")
+                    lines.append(f"  PO_NUMBER:   {import_data.get('PO_NUMBER', 'N/A')}")
+                    lines.append(f"  TALK:        {import_data.get('TALK', 'N/A')}")
+                    items = import_data.get('ITEM_DATA', [])
+                    for i, item in enumerate(items):
+                        lines.append(f"  ITEM[{i}]:     {item.get('MATERIAL_NO', '')} x {item.get('QUANTITY', '')} {item.get('UOM', '')}")
+                except:
+                    lines.append(f"LAST_IMPORT:   {last_import}")
+            else:
+                lines.append(f"LAST_IMPORT:   -")
 
-                lines.append(f"LAST_EXPORT:   {resp.get('LAST_EXPORT') or '-'}")
-                return '\n'.join(lines)
-    except:
-        pass
+            lines.append(f"LAST_EXPORT:   {resp.get('LAST_EXPORT') or '-'}")
+            return '\n'.join(lines)
 
-    return raw
+    return str(body_dict)
 
 if __name__ == "__main__":
     mcp.run()
