@@ -477,7 +477,7 @@ def check_kitting_status(
     BATCH_ID: str,
     ctx: Context = None
 ) -> str:
-    """查詢 Kitting 流程狀態 (v2 - 結構化輸出)"""
+    """查詢 Kitting 流程狀態 — 只回傳 LAST_ACTION 和 LAST_IMPORT"""
     
     session_id = _get_session_id(ctx)
 
@@ -519,36 +519,10 @@ def check_kitting_status(
     if body_dict and isinstance(body_dict, dict):
         resp = recursive_find('RETURN_DATA', body_dict)
         if resp and isinstance(resp, dict):
-            lines = []
-            lines.append(f"BATCH_ID:      {resp.get('BATCH_ID', 'N/A')}")
-            lines.append(f"PO:            {resp.get('PO', 'N/A')}")
-            lines.append(f"STATUS:        {resp.get('STATUS', 'N/A')}")
-            lines.append(f"TRIGGER_DATE:  {resp.get('TRIGGER_DATE', 'N/A')}")
-            lines.append(f"TRIGGER_TIME:  {resp.get('TRIGGER_TIME', 'N/A')}")
-            lines.append(f"SO_SUCCESS:    {resp.get('SO_SUCCESS') or '-'}")
-            lines.append(f"STO_SUCCESS:   {resp.get('STO_SUCCESS') or '-'}")
-            lines.append(f"DN_SUCCESS:    {resp.get('DN_SUCCESS') or '-'}")
-            lines.append(f"LAST_ACTION:   {resp.get('LAST_ACTION') or '-'}")
-
-            # Parse LAST_IMPORT JSON string if exists
-            last_import = resp.get('LAST_IMPORT')
-            if last_import:
-                try:
-                    import_data = json.loads(last_import) if isinstance(last_import, str) else last_import
-                    lines.append(f"LAST_IMPORT:")
-                    lines.append(f"  UUID:        {import_data.get('UUID', 'N/A')}")
-                    lines.append(f"  PO_NUMBER:   {import_data.get('PO_NUMBER', 'N/A')}")
-                    lines.append(f"  TALK:        {import_data.get('TALK', 'N/A')}")
-                    items = import_data.get('ITEM_DATA', [])
-                    for i, item in enumerate(items):
-                        lines.append(f"  ITEM[{i}]:     {item.get('MATERIAL_NO', '')} x {item.get('QUANTITY', '')} {item.get('UOM', '')}")
-                except:
-                    lines.append(f"LAST_IMPORT:   {last_import}")
-            else:
-                lines.append(f"LAST_IMPORT:   -")
-
-            lines.append(f"LAST_EXPORT:   {resp.get('LAST_EXPORT') or '-'}")
-            return '\n'.join(lines)
+            return (
+                f"LAST_ACTION:   {resp.get('LAST_ACTION') or '-'}\n"
+                f"LAST_IMPORT:   {resp.get('LAST_IMPORT') or '-'}"
+            )
 
     return str(body_dict)
 
