@@ -9,6 +9,7 @@
 # ///
 
 import os
+import json
 import requests
 import xmltodict
 from typing import List, Optional
@@ -447,7 +448,48 @@ def check_kitting_status(
     # BATCH_ID is a single value (Structure/Element), not a Table
     xml_body = f'<urn:ZAI_FLOW_STATUS><BATCH_ID>{batch_id_val}</BATCH_ID></urn:ZAI_FLOW_STATUS>'
     
-    return SAPClient("STATUS", session_id).post_soap(xml_body)
+    raw = SAPClient("STATUS", session_id).post_soap(xml_body)
+
+    # Format response for readability
+    try:
+        parsed = eval(raw) if isinstance(raw, str) and raw.startswith('{') else raw
+        if isinstance(parsed, dict):
+            resp = recursive_find('RETURN_DATA', parsed)
+            if resp and isinstance(resp, dict):
+                lines = []
+                lines.append(f"BATCH_ID:      {resp.get('BATCH_ID', 'N/A')}")
+                lines.append(f"PO:            {resp.get('PO', 'N/A')}")
+                lines.append(f"STATUS:        {resp.get('STATUS', 'N/A')}")
+                lines.append(f"TRIGGER_DATE:  {resp.get('TRIGGER_DATE', 'N/A')}")
+                lines.append(f"TRIGGER_TIME:  {resp.get('TRIGGER_TIME', 'N/A')}")
+                lines.append(f"SO_SUCCESS:    {resp.get('SO_SUCCESS') or '-'}")
+                lines.append(f"STO_SUCCESS:   {resp.get('STO_SUCCESS') or '-'}")
+                lines.append(f"DN_SUCCESS:    {resp.get('DN_SUCCESS') or '-'}")
+                lines.append(f"LAST_ACTION:   {resp.get('LAST_ACTION') or '-'}")
+
+                # Parse LAST_IMPORT JSON string if exists
+                last_import = resp.get('LAST_IMPORT')
+                if last_import:
+                    try:
+                        import_data = json.loads(last_import) if isinstance(last_import, str) else last_import
+                        lines.append(f"LAST_IMPORT:")
+                        lines.append(f"  UUID:        {import_data.get('UUID', 'N/A')}")
+                        lines.append(f"  PO_NUMBER:   {import_data.get('PO_NUMBER', 'N/A')}")
+                        lines.append(f"  TALK:        {import_data.get('TALK', 'N/A')}")
+                        items = import_data.get('ITEM_DATA', [])
+                        for i, item in enumerate(items):
+                            lines.append(f"  ITEM[{i}]:     {item.get('MATERIAL_NO', '')} x {item.get('QUANTITY', '')} {item.get('UOM', '')}")
+                    except:
+                        lines.append(f"LAST_IMPORT:   {last_import}")
+                else:
+                    lines.append(f"LAST_IMPORT:   -")
+
+                lines.append(f"LAST_EXPORT:   {resp.get('LAST_EXPORT') or '-'}")
+                return '\n'.join(lines)
+    except:
+        pass
+
+    return raw
 
 if __name__ == "__main__":
     mcp.run()
