@@ -444,7 +444,8 @@ def check_kitting_status(
     # Ensure BATCH_ID is 16 chars, zero-padded to match SAP format
     batch_id_val = BATCH_ID.strip().zfill(16)
 
-    xml_body = f'<urn:ZAI_FLOW_STATUS><BATCH_ID><item><BATCH_ID>{batch_id_val}</BATCH_ID></item></BATCH_ID></urn:ZAI_FLOW_STATUS>'
+    # BATCH_ID is a single value (Structure/Element), not a Table
+    xml_body = f'<urn:ZAI_FLOW_STATUS><BATCH_ID>{batch_id_val}</BATCH_ID></urn:ZAI_FLOW_STATUS>'
     
     return SAPClient("STATUS", session_id).post_soap(xml_body)
 
