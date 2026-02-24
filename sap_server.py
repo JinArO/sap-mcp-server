@@ -450,7 +450,33 @@ def check_kitting_status(
     
     raw = SAPClient("STATUS", session_id).post_soap(xml_body)
 
-    # Format response for readability
+    # ── Format error responses ──
+    if isinstance(raw, str):
+        if raw.startswith("連線錯誤:") or raw.startswith("Connection Error:"):
+            return (
+                f"[ERROR] 連線失敗\n"
+                f"TYPE:          連線錯誤 (Connection Error)\n"
+                f"BATCH_ID:      {batch_id_val}\n"
+                f"DETAIL:        {raw.split(':', 1)[1].strip()}"
+            )
+        if raw.startswith("HTTP 錯誤") or raw.startswith("HTTP Error"):
+            # Try to extract SOAP fault message
+            fault_msg = raw
+            try:
+                fault_parsed = xmltodict.parse(raw.split(":", 1)[1].strip())
+                fault = recursive_find('faultstring', fault_parsed)
+                if fault:
+                    fault_msg = fault
+            except:
+                pass
+            return (
+                f"[ERROR] HTTP 錯誤\n"
+                f"TYPE:          HTTP Error\n"
+                f"BATCH_ID:      {batch_id_val}\n"
+                f"DETAIL:        {fault_msg}"
+            )
+
+    # ── Format success responses ──
     try:
         parsed = eval(raw) if isinstance(raw, str) and raw.startswith('{') else raw
         if isinstance(parsed, dict):
