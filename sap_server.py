@@ -262,6 +262,22 @@ def _get_session_id(ctx: Context = None) -> str:
         return str(session_id)
     return 'default'
 
+def recursive_find(key, data):
+    """在巢狀 dict 中遞迴搜尋指定 key 的值"""
+    if isinstance(data, dict):
+        if key in data:
+            return data[key]
+        for v in data.values():
+            result = recursive_find(key, v)
+            if result is not None:
+                return result
+    elif isinstance(data, list):
+        for item in data:
+            result = recursive_find(key, item)
+            if result is not None:
+                return result
+    return None
+
 # ==============================================================================
 # SAP 操作工具 (SAP Operation Tools)
 # ==============================================================================
