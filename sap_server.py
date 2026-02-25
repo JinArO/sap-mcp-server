@@ -535,9 +535,19 @@ def check_kitting_status(
     if body_dict and isinstance(body_dict, dict):
         resp = recursive_find('RETURN_DATA', body_dict)
         if resp and isinstance(resp, dict):
+            last_action = resp.get('LAST_ACTION') or '-'
+            last_import_raw = resp.get('LAST_IMPORT') or '-'
+
+            # Pretty-print LAST_IMPORT if it's JSON
+            try:
+                import_obj = json.loads(last_import_raw) if isinstance(last_import_raw, str) else last_import_raw
+                last_import_fmt = json.dumps(import_obj, indent=2, ensure_ascii=False)
+            except:
+                last_import_fmt = last_import_raw
+
             return (
-                f"LAST_ACTION:   {resp.get('LAST_ACTION') or '-'}\n"
-                f"LAST_IMPORT:   {resp.get('LAST_IMPORT') or '-'}"
+                f"LAST_ACTION: {last_action}, "
+                f"LAST_IMPORT:\n{last_import_fmt}"
             )
 
     return str(body_dict)
