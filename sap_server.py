@@ -537,17 +537,23 @@ def check_kitting_status(
         if resp and isinstance(resp, dict):
             last_action = resp.get('LAST_ACTION') or '-'
             last_import_raw = resp.get('LAST_IMPORT') or '-'
+            last_export_raw = resp.get('LAST_EXPORT') or '-'
 
-            # Pretty-print LAST_IMPORT if it's JSON
-            try:
-                import_obj = json.loads(last_import_raw) if isinstance(last_import_raw, str) else last_import_raw
-                last_import_fmt = json.dumps(import_obj, indent=2, ensure_ascii=False)
-            except:
-                last_import_fmt = last_import_raw
+            # Pretty-print JSON fields
+            def _pretty_json(raw):
+                try:
+                    obj = json.loads(raw) if isinstance(raw, str) else raw
+                    return json.dumps(obj, indent=2, ensure_ascii=False)
+                except:
+                    return raw
+
+            last_import_fmt = _pretty_json(last_import_raw)
+            last_export_fmt = _pretty_json(last_export_raw)
 
             return (
-                f"LAST_ACTION: {last_action}, "
-                f"LAST_IMPORT:\n{last_import_fmt}"
+                f"LAST_ACTION: {last_action},\n"
+                f"LAST_IMPORT:\n{last_import_fmt},\n"
+                f"LAST_EXPORT:\n{last_export_fmt}"
             )
 
     return str(body_dict)
