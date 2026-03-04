@@ -493,7 +493,7 @@ def check_kitting_status(
     BATCH_ID: str,
     ctx: Context = None
 ) -> str:
-    """查詢 Kitting 流程狀態 — 只回傳 LAST_ACTION 和 LAST_IMPORT"""
+    """查詢 Kitting 流程狀態 — 回傳 全部資料"""
     
     session_id = _get_session_id(ctx)
 
