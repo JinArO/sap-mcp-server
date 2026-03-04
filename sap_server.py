@@ -15,6 +15,10 @@ import xmltodict
 from typing import List, Optional
 from mcp.server.fastmcp import FastMCP, Context
 from pydantic import Field
+import urllib3
+
+# 禁用 SSL 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
 # 設定 (Configuration)
